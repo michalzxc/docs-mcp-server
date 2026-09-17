@@ -171,6 +171,28 @@ export const DEFAULT_CONFIG = {
     subsequentSiblingsLimit: 2,
     maxChunkDistance: 3,
   },
+  cleanup: {
+    enabled: false,
+    model: "",
+    baseUrl: "",
+    sliceChars: 5000,
+    maxConcurrency: 2,
+    requestDelayMs: 0,
+    requestTimeoutMs: 120_000,
+    maxLengthDrift: 0.35,
+    filter: "dirty",
+    storeRawContent: true,
+    systemPrompt: "",
+  },
+  automation: {
+    enabled: false,
+    windowStart: "01:00",
+    windowEnd: "05:00",
+    tickIntervalMs: 60_000,
+    cleanupEnabled: true,
+    refreshEnabled: false,
+    refreshMinIntervalHours: 168,
+  },
 } as const;
 
 // --- Configuration Schema (Nested) ---
@@ -405,6 +427,66 @@ export const AppConfigSchema = z.object({
         .default(DEFAULT_CONFIG.assembly.maxChunkDistance),
     })
     .default(DEFAULT_CONFIG.assembly),
+  cleanup: z
+    .object({
+      enabled: envBoolean.default(DEFAULT_CONFIG.cleanup.enabled),
+      model: z.string().default(DEFAULT_CONFIG.cleanup.model),
+      baseUrl: z.string().default(DEFAULT_CONFIG.cleanup.baseUrl),
+      sliceChars: z.coerce
+        .number()
+        .int()
+        .min(500)
+        .default(DEFAULT_CONFIG.cleanup.sliceChars),
+      maxConcurrency: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .default(DEFAULT_CONFIG.cleanup.maxConcurrency),
+      requestDelayMs: z.coerce
+        .number()
+        .int()
+        .min(0)
+        .default(DEFAULT_CONFIG.cleanup.requestDelayMs),
+      requestTimeoutMs: z.coerce
+        .number()
+        .int()
+        .min(1000)
+        .default(DEFAULT_CONFIG.cleanup.requestTimeoutMs),
+      maxLengthDrift: z.coerce
+        .number()
+        .min(0)
+        .max(1)
+        .default(DEFAULT_CONFIG.cleanup.maxLengthDrift),
+      filter: z.enum(["dirty", "all"]).default(DEFAULT_CONFIG.cleanup.filter),
+      storeRawContent: envBoolean.default(DEFAULT_CONFIG.cleanup.storeRawContent),
+      systemPrompt: z.string().default(DEFAULT_CONFIG.cleanup.systemPrompt),
+    })
+    .default(DEFAULT_CONFIG.cleanup),
+  automation: z
+    .object({
+      enabled: envBoolean.default(DEFAULT_CONFIG.automation.enabled),
+      windowStart: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM")
+        .default(DEFAULT_CONFIG.automation.windowStart),
+      windowEnd: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM")
+        .default(DEFAULT_CONFIG.automation.windowEnd),
+      tickIntervalMs: z.coerce
+        .number()
+        .int()
+        .min(1000)
+        .default(DEFAULT_CONFIG.automation.tickIntervalMs),
+      cleanupEnabled: envBoolean.default(DEFAULT_CONFIG.automation.cleanupEnabled),
+      refreshEnabled: envBoolean.default(DEFAULT_CONFIG.automation.refreshEnabled),
+      refreshMinIntervalHours: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .default(DEFAULT_CONFIG.automation.refreshMinIntervalHours),
+    })
+    .default(DEFAULT_CONFIG.automation),
 });
 
 const vectorDimensionExplicit = Symbol("vectorDimensionExplicit");
