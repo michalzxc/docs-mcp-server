@@ -13,6 +13,7 @@ import {
 } from "../telemetry";
 import { loadConfig } from "../utils/config";
 import { resolveStorePath } from "../utils/paths";
+import { createCleanupCommand } from "./commands/cleanup";
 // Commands
 import { createConfigCommand } from "./commands/config";
 import { createDefaultAction } from "./commands/default";
@@ -171,6 +172,7 @@ export function createCli(argv: string[]): Argv {
   createListCommand(cli);
   createMcpCommand(cli);
   createRefreshCommand(cli);
+  createCleanupCommand(cli);
   createRemoveCommand(cli);
   createScrapeCommand(cli);
   createSearchCommand(cli);
