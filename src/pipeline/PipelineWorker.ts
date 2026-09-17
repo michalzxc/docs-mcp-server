@@ -1,3 +1,4 @@
+import { CleanupService } from "../cleanup/CleanupService";
 import type { ScraperService } from "../scraper";
 import type {
   ScrapeResult,
@@ -5,9 +6,11 @@ import type {
   ScraperProgressEvent,
 } from "../scraper/types";
 import type { DocumentManagementService } from "../store";
+import type { AppConfig } from "../utils/config";
 import { logger } from "../utils/logger";
 import { CancellationError } from "./errors";
 import type { InternalPipelineJob } from "./types";
+import { PipelineJobKind } from "./types";
 
 /**
  * Internal callbacks used by PipelineWorker.
@@ -31,11 +34,69 @@ export class PipelineWorker {
   // Dependencies are passed in, making the worker stateless regarding specific jobs
   private readonly store: DocumentManagementService;
   private readonly scraperService: ScraperService;
+  private readonly appConfig?: AppConfig;
 
   // Constructor accepts dependencies needed for execution
-  constructor(store: DocumentManagementService, scraperService: ScraperService) {
+  constructor(
+    store: DocumentManagementService,
+    scraperService: ScraperService,
+    appConfig?: AppConfig,
+  ) {
     this.store = store;
     this.scraperService = scraperService;
+    this.appConfig = appConfig;
+  }
+
+  /**
+   * Repairs the Markdown of an already-indexed version.
+   *
+   * Fetches nothing: it reads each page's stored text, sends slices to the
+   * configured model, and replaces the page's chunks. A slice that fails keeps
+   * its original text, so the worst outcome is a page left as it was.
+   */
+  private async executeCleanupJob(
+    job: InternalPipelineJob,
+    callbacks: WorkerCallbacks,
+  ): Promise<void> {
+    const { id: jobId, library, version, abortController } = job;
+
+    if (!this.appConfig) {
+      throw new Error("Cleanup job requires application configuration");
+    }
+    if (!job.versionId) {
+      throw new Error(`Cleanup job ${jobId} has no version id`);
+    }
+
+    const service = new CleanupService(this.store, this.appConfig);
+    logger.info(`🧹 Cleaning markdown for ${library}@${version || "latest"}`);
+
+    const summary = await service.cleanVersion(
+      job.versionId,
+      {
+        full: job.cleanupOptions?.full,
+        force: job.cleanupOptions?.force,
+        signal: abortController.signal,
+      },
+      (progress) => {
+        // Reuse the scrape progress shape so the Jobs view, the event bus and
+        // the database counters need no special case for cleanup.
+        void callbacks.onJobProgress?.(job, {
+          pagesScraped: progress.pagesDone,
+          totalPages: progress.pagesTotal,
+          totalDiscovered: progress.pagesTotal,
+          currentUrl: progress.page.url,
+          depth: 0,
+          maxDepth: 0,
+          result: null,
+        } as unknown as ScraperProgressEvent);
+      },
+    );
+
+    logger.info(
+      `🧹 Cleanup finished for ${library}@${version || "latest"}: ` +
+        `${summary.pagesCleaned} cleaned, ${summary.pagesSkipped} skipped, ` +
+        `${summary.pagesFailed} failed`,
+    );
   }
 
   /**
@@ -48,6 +109,14 @@ export class PipelineWorker {
     const signal = abortController.signal;
 
     logger.debug(`[${jobId}] Worker starting job for ${library}@${version}`);
+
+    // Cleanup fetches nothing, so it branches before any scraper option is
+    // read: its job carries placeholders, and `clean`/`isRefresh` below would
+    // otherwise decide to wipe the very documents it is meant to repair.
+    if (job.kind === PipelineJobKind.CLEANUP) {
+      await this.executeCleanupJob(job, callbacks);
+      return;
+    }
 
     try {
       // Clear existing documents for this library/version before scraping

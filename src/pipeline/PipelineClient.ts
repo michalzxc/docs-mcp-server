@@ -130,6 +130,35 @@ export class PipelineClient implements IPipeline {
     }
   }
 
+  /**
+   * Queues a Markdown cleanup pass on the remote worker.
+   *
+   * The work happens where the store is, so only the request crosses the wire.
+   */
+  async enqueueCleanupJob(
+    library: string,
+    version: string | undefined | null,
+    options?: { full?: boolean; force?: boolean },
+  ): Promise<string> {
+    try {
+      const normalizedVersion =
+        typeof version === "string" && version.trim().length === 0
+          ? null
+          : (version ?? null);
+      const result = await this.client.enqueueCleanupJob.mutate({
+        library,
+        version: normalizedVersion,
+        options,
+      });
+      logger.debug(`Cleanup job ${result.jobId} enqueued successfully`);
+      return result.jobId;
+    } catch (error) {
+      throw new Error(
+        `Failed to enqueue cleanup job: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async getJob(jobId: string): Promise<PipelineJob | undefined> {
     try {
       // superjson automatically deserializes Date objects

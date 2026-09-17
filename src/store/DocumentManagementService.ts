@@ -21,12 +21,14 @@ import {
 } from "./errors";
 import type {
   ActivityHistory,
+  CleanupPage,
   DbVersionWithLibrary,
   EmbeddingConfigInfo,
   FindVersionResult,
   LibrarySummary,
   ListVersionChunksOptions,
   ListVersionChunksResult,
+  PageCleanupStatus,
   ScraperConfig,
   StoreSearchResult,
   VersionChunkStats,
@@ -404,6 +406,60 @@ export class DocumentManagementService {
     Array<{ id: number; url: string; etag: string | null; depth: number | null }>
   > {
     return this.store.getPagesByVersionId(versionId);
+  }
+
+  /**
+   * Cleanup pass delegations.
+   *
+   * Thin on purpose, like the rest of this class: the cleanup service depends
+   * on this narrow set rather than on DocumentStore, so the work it can do to
+   * an index is visible in one place — replace a page's chunks, and record
+   * that it did.
+   */
+  async getPageForCleanup(pageId: number): Promise<CleanupPage | null> {
+    return this.store.getPageForCleanup(pageId);
+  }
+
+  async getPagesNeedingCleanup(
+    versionId: number,
+    fingerprint: string,
+    limit: number,
+  ): Promise<CleanupPage[]> {
+    return this.store.getPagesNeedingCleanup(versionId, fingerprint, limit);
+  }
+
+  async countPagesNeedingCleanup(
+    versionId: number,
+    fingerprint: string,
+  ): Promise<number> {
+    return this.store.countPagesNeedingCleanup(versionId, fingerprint);
+  }
+
+  async getChunksByPageId(
+    pageId: number,
+  ): Promise<Array<{ id: number; content: string; sort_order: number }>> {
+    return this.store.getChunksByPageId(pageId);
+  }
+
+  async setPageRawContent(pageId: number, markdown: string): Promise<void> {
+    return this.store.setPageRawContent(pageId, markdown);
+  }
+
+  async markPageCleanup(
+    pageId: number,
+    status: PageCleanupStatus,
+    fingerprint: string,
+  ): Promise<void> {
+    return this.store.markPageCleanup(pageId, status, fingerprint);
+  }
+
+  async replacePageChunks(
+    pageId: number,
+    chunks: Chunk[],
+    title: string,
+    url: string,
+  ): Promise<void> {
+    return this.store.replacePageChunks(pageId, chunks, title, url);
   }
 
   /**

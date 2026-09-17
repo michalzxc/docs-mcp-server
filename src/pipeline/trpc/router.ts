@@ -54,6 +54,19 @@ const enqueueRefreshInput = z.object({
     .optional(),
 });
 
+const enqueueCleanupInput = z.object({
+  library: nonEmptyTrimmed,
+  version: optionalTrimmed,
+  options: z
+    .object({
+      /** Clean every page, not only those carrying conversion artefacts. */
+      full: z.boolean().optional(),
+      /** Re-clean pages already cleaned with the current prompt and model. */
+      force: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 const jobIdInput = z.object({ id: z.string().min(1) });
 
 const getJobsInput = z.object({
@@ -97,6 +110,26 @@ export function createPipelineRouter(trpc: unknown) {
           input: z.infer<typeof enqueueRefreshInput>;
         }) => {
           const jobId = await ctx.pipeline.enqueueRefreshJob(
+            input.library,
+            input.version ?? null,
+            input.options,
+          );
+
+          return { jobId };
+        },
+      ),
+
+    enqueueCleanupJob: tt.procedure
+      .input(enqueueCleanupInput)
+      .mutation(
+        async ({
+          ctx,
+          input,
+        }: {
+          ctx: PipelineTrpcContext;
+          input: z.infer<typeof enqueueCleanupInput>;
+        }) => {
+          const jobId = await ctx.pipeline.enqueueCleanupJob(
             input.library,
             input.version ?? null,
             input.options,

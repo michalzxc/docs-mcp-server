@@ -21,7 +21,7 @@ import { CancellationError, PipelineStateError } from "./errors";
 import { PipelineWorker } from "./PipelineWorker"; // Import the worker
 import type { IPipeline } from "./trpc/interfaces";
 import type { InternalPipelineJob, PipelineJob } from "./types";
-import { PipelineJobStatus } from "./types";
+import { PipelineJobKind, PipelineJobStatus } from "./types";
 
 /**
  * Manages a queue of document processing jobs, controlling concurrency and tracking progress.
@@ -272,6 +272,7 @@ export class PipelineManager implements IPipeline {
       id: jobId,
       library,
       version: normalizedVersion,
+      kind: options.isRefresh ? PipelineJobKind.REFRESH : PipelineJobKind.SCRAPE,
       status: PipelineJobStatus.QUEUED,
       progress: null,
       error: null,
@@ -318,6 +319,101 @@ export class PipelineManager implements IPipeline {
    * If the version was never completed (interrupted or failed scrape), performs a
    * full re-scrape from scratch instead of a refresh to ensure completeness.
    */
+  /**
+   * Queues a Markdown cleanup pass over an already-indexed version.
+   *
+   * Shares the queue and the concurrency budget with scraping, so a sweep
+   * cannot crowd out an index job, and cancelling it costs nothing: pages are
+   * marked one at a time and the next run picks up where this one stopped.
+   */
+  async enqueueCleanupJob(
+    library: string,
+    version: string | undefined | null,
+    options?: { full?: boolean; force?: boolean },
+  ): Promise<string> {
+    const normalizedVersion = version ?? "";
+
+    // The version must exist: cleanup repairs what is already indexed and can
+    // create nothing of its own.
+    const versionId = await this.store.ensureLibraryAndVersion(
+      library,
+      normalizedVersion,
+    );
+
+    const allJobs = await this.getJobs();
+    const duplicate = allJobs.find(
+      (job) =>
+        job.library === library &&
+        (job.version ?? "") === normalizedVersion &&
+        job.kind === PipelineJobKind.CLEANUP &&
+        [PipelineJobStatus.QUEUED, PipelineJobStatus.RUNNING].includes(job.status),
+    );
+    if (duplicate) {
+      logger.info(
+        `🧹 Cleanup already queued for ${library}@${normalizedVersion || "latest"}: ${duplicate.id}`,
+      );
+      return duplicate.id;
+    }
+
+    const jobId = uuidv4();
+    const abortController = new AbortController();
+    let resolveCompletion!: () => void;
+    let rejectCompletion!: (reason?: unknown) => void;
+    const completionPromise = new Promise<void>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    completionPromise.catch(() => {});
+
+    const job: InternalPipelineJob = {
+      id: jobId,
+      library,
+      version: normalizedVersion,
+      kind: PipelineJobKind.CLEANUP,
+      status: PipelineJobStatus.QUEUED,
+      progress: null,
+      error: null,
+      createdAt: new Date(),
+      startedAt: null,
+      finishedAt: null,
+      abortController,
+      completionPromise,
+      resolveCompletion,
+      rejectCompletion,
+      progressPages: 0,
+      progressMaxPages: 0,
+      errorMessage: null,
+      updatedAt: new Date(),
+      versionId,
+      sourceUrl: "",
+      cleanupOptions: options,
+      // Placeholders: cleanup fetches nothing. updateJobStatus refuses to
+      // persist these for a cleanup job, so the version's real scrape options
+      // survive untouched.
+      scraperOptions: {
+        url: "",
+        library,
+        version: normalizedVersion,
+      } as ScraperOptions,
+    };
+
+    this.jobMap.set(jobId, job);
+    this.jobQueue.push(jobId);
+    logger.info(
+      `🧹 Cleanup job enqueued: ${jobId} for ${library}${normalizedVersion ? `@${normalizedVersion}` : " (latest)"}`,
+    );
+
+    await this.updateJobStatus(job, PipelineJobStatus.QUEUED);
+
+    if (this.isRunning) {
+      this._processQueue().catch((error) => {
+        logger.error(`❌ Error in processQueue during cleanup enqueue: ${error}`);
+      });
+    }
+
+    return jobId;
+  }
+
   async enqueueRefreshJob(
     library: string,
     version: string | undefined | null,
@@ -639,7 +735,9 @@ export class PipelineManager implements IPipeline {
 
     // Instantiate a worker for this job.
     // Dependencies (store, scraperService) are held by the manager.
-    const worker = new PipelineWorker(this.store, this.scraperService);
+    // Config goes to the worker because cleanup jobs need it: model, slice
+    // size, concurrency and the prompt all come from there.
+    const worker = new PipelineWorker(this.store, this.scraperService, this.appConfig);
 
     try {
       // Delegate the actual work to the worker
@@ -751,8 +849,15 @@ export class PipelineManager implements IPipeline {
       const dbStatus = this.mapJobStatusToVersionStatus(newStatus);
       await this.store.updateVersionStatus(versionId, dbStatus, errorMessage);
 
-      // Store scraper options when job is first queued
-      if (newStatus === PipelineJobStatus.QUEUED && job.scraperOptions) {
+      // Store scraper options when job is first queued.
+      // Cleanup jobs are excluded on purpose: they carry placeholder options
+      // (they fetch nothing), and storing those would overwrite the real
+      // scrape settings a later refresh depends on — maxPages, scope, patterns.
+      if (
+        newStatus === PipelineJobStatus.QUEUED &&
+        job.kind !== PipelineJobKind.CLEANUP &&
+        job.scraperOptions
+      ) {
         try {
           // Pass the complete scraper options (DocumentStore will filter runtime fields)
           await this.store.storeScraperOptions(versionId, job.scraperOptions);

@@ -31,6 +31,18 @@ export interface IPipeline {
     version: string | undefined | null,
     options?: Pick<ScraperOptions, "preserveHashes">,
   ): Promise<string>;
+  /**
+   * Queues a Markdown cleanup pass over an already-indexed version.
+   *
+   * Declared here as well as on the manager because a remote worker reaches
+   * the pipeline through this interface; omitting it fails at runtime in
+   * distributed mode rather than at compile time.
+   */
+  enqueueCleanupJob(
+    library: string,
+    version: string | undefined | null,
+    options?: { full?: boolean; force?: boolean },
+  ): Promise<string>;
   getJob(jobId: string): Promise<PipelineJob | undefined>;
   getJobs(status?: PipelineJobStatus): Promise<PipelineJob[]>;
   cancelJob(jobId: string): Promise<void>;

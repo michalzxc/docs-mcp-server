@@ -18,6 +18,20 @@ export enum PipelineJobStatus {
 }
 
 /**
+ * What a job does. Jobs share the queue, the concurrency budget and the status
+ * bookkeeping; only the work differs.
+ *
+ * SCRAPE and REFRESH fetch pages. CLEANUP touches no network at all: it repairs
+ * the Markdown of pages already stored, which is why it can run against a
+ * library indexed months ago and why cancelling it loses nothing.
+ */
+export enum PipelineJobKind {
+  SCRAPE = "scrape",
+  REFRESH = "refresh",
+  CLEANUP = "cleanup",
+}
+
+/**
  * Public interface for pipeline jobs exposed through API boundaries.
  * Contains only serializable fields suitable for JSON transport.
  */
@@ -30,6 +44,8 @@ export interface PipelineJob {
   version: string | null;
   /** Current pipeline status of the job. */
   status: PipelineJobStatus;
+  /** What the job does. Absent on jobs created before job kinds existed. */
+  kind?: PipelineJobKind;
   /** Detailed progress information. */
   progress: ScraperProgressEvent | null;
   /** Error information if the job failed. */
@@ -73,6 +89,12 @@ export interface InternalPipelineJob
   error: Error | null;
   /** Complete scraper options with runtime configuration. */
   scraperOptions: ScraperOptions;
+  /**
+   * Options for a CLEANUP job. Absent on scrape and refresh jobs, which is
+   * also why cleanup carries its settings here rather than in scraperOptions:
+   * those are persisted per version and describe how to fetch a site.
+   */
+  cleanupOptions?: { full?: boolean; force?: boolean };
   /** AbortController to signal cancellation. */
   abortController: AbortController;
   /** Promise that resolves/rejects when the job finishes. */
