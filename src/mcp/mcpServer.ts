@@ -253,6 +253,64 @@ export function createMcpServerInstance(
     );
   }
 
+  // Markdown cleanup tool. Registered only when cleanup is configured: without
+  // a model behind it the tool would exist and fail on every call.
+  if (!readOnly && config.cleanup.enabled) {
+    server.tool(
+      "cleanup_docs",
+      "Repair the Markdown of an already-indexed library version with an LLM, " +
+        "fixing leftover HTML, needless escapes and unbalanced code fences. " +
+        "Reads stored pages only — it does not fetch the documentation site.",
+      {
+        library: z.string().trim().describe("Library name."),
+        version: z
+          .string()
+          .trim()
+          .optional()
+          .describe("Library version (optional, cleans latest if omitted)."),
+        full: z
+          .boolean()
+          .optional()
+          .describe(
+            "Clean every page, not only those carrying conversion artefacts (default: false).",
+          ),
+      },
+      {
+        title: "Clean Up Library Markdown",
+        // Originals are kept, and a failed repair leaves the page as it was.
+        destructiveHint: false,
+        // Works from stored text; the only network call is to the configured model.
+        openWorldHint: false,
+      },
+      async ({ library, version, full }) => {
+        telemetry.track(TelemetryEvent.TOOL_USED, {
+          tool: "cleanup_docs",
+          context: "mcp_server",
+          library,
+          version,
+        });
+
+        try {
+          const result = await tools.cleanup.execute({
+            library,
+            version,
+            full,
+            waitForCompletion: false,
+          });
+
+          if ("jobId" in result) {
+            return createResponse(`🧹 Cleanup job started with ID: ${result.jobId}.`);
+          }
+          return createResponse(
+            `Cleanup finished immediately with ${result.pagesCleaned} pages.`,
+          );
+        } catch (error) {
+          return createError(error);
+        }
+      },
+    );
+  }
+
   // Search docs tool
   server.tool(
     "search_docs",

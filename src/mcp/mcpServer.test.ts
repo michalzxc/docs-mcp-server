@@ -12,11 +12,15 @@ import type { McpServerTools } from "./tools";
 const mockConfig = {
   app: { readOnly: false },
   scraper: { maxPages: 100, maxDepth: 3 },
+  // Cleanup off by default, matching the shipped default: the tool is only
+  // registered where a model is actually configured.
+  cleanup: { enabled: false },
 } as unknown as AppConfig;
 
 const mockReadOnlyConfig = {
   app: { readOnly: true },
   scraper: { maxPages: 100, maxDepth: 3 },
+  cleanup: { enabled: false },
 } as unknown as AppConfig;
 
 // Mock tools
@@ -38,6 +42,9 @@ const mockTools: McpServerTools = {
   } as any,
   refresh: {
     execute: vi.fn(async () => ({ jobId: "refresh-job-123" })),
+  } as any,
+  cleanup: {
+    execute: vi.fn(async () => ({ jobId: "cleanup-job-123" })),
   } as any,
   listJobs: {
     execute: vi.fn(async () => ({ jobs: [] })),
