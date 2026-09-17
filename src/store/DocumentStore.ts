@@ -32,6 +32,7 @@ import type {
   VersionComposition,
 } from "./types";
 import {
+  type CleanupPage,
   type DbChunk,
   type DbLibraryVersion,
   type DbPage,
@@ -41,6 +42,7 @@ import {
   type DbVersionWithLibrary,
   denormalizeVersionName,
   normalizeVersionName,
+  type PageCleanupStatus,
   type VersionScraperOptions,
   type VersionStatus,
 } from "./types";
@@ -164,6 +166,13 @@ export class DocumentStore {
     countVersionsByLibraryId: Database.Statement<[number]>;
     getVersionId: Database.Statement<[string, string]>;
     getPagesByVersionId: Database.Statement<[number]>;
+    // Cleanup pass: the page's pre-cleanup markdown plus its bookkeeping.
+    setPageRawContent: Database.Statement<[string, number]>;
+    markPageCleanup: Database.Statement<[string, string, number]>;
+    getPageForCleanup: Database.Statement<[number]>;
+    getChunksByPageId: Database.Statement<[number]>;
+    getPagesNeedingCleanup: Database.Statement<[number, string, number]>;
+    countPagesNeedingCleanup: Database.Statement<[number, string]>;
   };
 
   /**
@@ -288,6 +297,42 @@ export class DocumentStore {
       ),
       getPageId: this.db.prepare<[number, string]>(
         "SELECT id FROM pages WHERE version_id = ? AND url = ?",
+      ),
+      // Written separately from insertPage on purpose: that statement is an
+      // upsert over etag/last_modified/title/depth, and a cleanup pass must
+      // never touch those. Losing an ETag silently re-downloads a whole site
+      // on the next refresh.
+      setPageRawContent: this.db.prepare<[string, number]>(
+        "UPDATE pages SET raw_content = ? WHERE id = ?",
+      ),
+      markPageCleanup: this.db.prepare<[string, string, number]>(
+        `UPDATE pages
+         SET cleanup_status = ?, cleanup_fingerprint = ?, cleanup_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      ),
+      getPageForCleanup: this.db.prepare<[number]>(
+        `SELECT id, version_id, url, title, raw_content, cleanup_status, cleanup_fingerprint
+         FROM pages WHERE id = ?`,
+      ),
+      getChunksByPageId: this.db.prepare<[number]>(
+        `SELECT id, content, json(metadata) as metadata, sort_order
+         FROM documents WHERE page_id = ? ORDER BY sort_order`,
+      ),
+      // A page needs cleaning when it has never been cleaned, or was cleaned
+      // by a prompt/model we no longer use. Editing the prompt therefore makes
+      // every page stale without touching a row.
+      getPagesNeedingCleanup: this.db.prepare<[number, string, number]>(
+        `SELECT id, version_id, url, title, raw_content, cleanup_status, cleanup_fingerprint
+         FROM pages
+         WHERE version_id = ?
+           AND (cleanup_fingerprint IS NULL OR cleanup_fingerprint != ?)
+         ORDER BY id
+         LIMIT ?`,
+      ),
+      countPagesNeedingCleanup: this.db.prepare<[number, string]>(
+        `SELECT COUNT(*) as count FROM pages
+         WHERE version_id = ?
+           AND (cleanup_fingerprint IS NULL OR cleanup_fingerprint != ?)`,
       ),
       insertLibrary: this.db.prepare<[string]>(
         "INSERT INTO libraries (name) VALUES (?) ON CONFLICT(name) DO NOTHING",
@@ -1801,6 +1846,18 @@ export class DocumentStore {
         }
         const pageId = existingPage.id;
 
+        // Keep the page's markdown as it arrived, before any cleanup pass runs,
+        // so cleanup can be re-run with a different prompt or model without
+        // fetching the page again. Only stored when the feature is enabled:
+        // otherwise this column stays NULL and costs nothing.
+        if (
+          this.config.cleanup.enabled &&
+          this.config.cleanup.storeRawContent &&
+          result.textContent
+        ) {
+          this.statements.setPageRawContent.run(result.textContent, pageId);
+        }
+
         // Then insert document chunks linked to their pages
         let docIndex = 0;
         for (let i = 0; i < chunks.length; i++) {
@@ -1838,6 +1895,188 @@ export class DocumentStore {
       }
       throw new ConnectionError("Failed to add documents to store", error);
     }
+  }
+
+  /** Chunks of one page in document order, used to rebuild its markdown. */
+  async getChunksByPageId(
+    pageId: number,
+  ): Promise<Array<{ id: number; content: string; sort_order: number }>> {
+    return this.statements.getChunksByPageId.all(pageId) as Array<{
+      id: number;
+      content: string;
+      sort_order: number;
+    }>;
+  }
+
+  /** One page's cleanup state, or null when the page is gone. */
+  async getPageForCleanup(pageId: number): Promise<CleanupPage | null> {
+    const row = this.statements.getPageForCleanup.get(pageId) as CleanupPage | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Pages of a version that were never cleaned, or were cleaned with a
+   * different model/prompt than the one in use now.
+   */
+  async getPagesNeedingCleanup(
+    versionId: number,
+    fingerprint: string,
+    limit: number,
+  ): Promise<CleanupPage[]> {
+    return this.statements.getPagesNeedingCleanup.all(
+      versionId,
+      fingerprint,
+      limit,
+    ) as CleanupPage[];
+  }
+
+  /** How many pages of a version are missing or stale for this fingerprint. */
+  async countPagesNeedingCleanup(
+    versionId: number,
+    fingerprint: string,
+  ): Promise<number> {
+    const row = this.statements.countPagesNeedingCleanup.get(versionId, fingerprint) as
+      | { count: number }
+      | undefined;
+    return row?.count ?? 0;
+  }
+
+  /**
+   * Stores a page's pre-cleanup markdown.
+   *
+   * Used by the backfill path, where the original was never captured because
+   * the page was indexed before cleanup existed.
+   */
+  async setPageRawContent(pageId: number, markdown: string): Promise<void> {
+    this.statements.setPageRawContent.run(markdown, pageId);
+  }
+
+  /** Records the outcome of a cleanup pass over one page. */
+  async markPageCleanup(
+    pageId: number,
+    status: PageCleanupStatus,
+    fingerprint: string,
+  ): Promise<void> {
+    this.statements.markPageCleanup.run(status, fingerprint, pageId);
+  }
+
+  /**
+   * Replaces a page's chunks with freshly split ones.
+   *
+   * Deliberately does not go through `addDocuments`: that path upserts the
+   * page row, which would overwrite `etag`, `last_modified`, `title` and
+   * `depth` with whatever the caller happened to pass. Losing an ETag is
+   * invisible until the next refresh re-downloads an entire site.
+   *
+   * The FTS and vector tables follow along on their own — their triggers fire
+   * on chunk delete and insert.
+   */
+  async replacePageChunks(
+    pageId: number,
+    chunks: Array<{
+      content: string;
+      types?: string[];
+      section: { level: number; path: string[] };
+    }>,
+    title: string,
+    url: string,
+  ): Promise<void> {
+    try {
+      let paddedEmbeddings: number[][] = [];
+      if (this.isVectorSearchEnabled && chunks.length > 0) {
+        const texts = chunks.map((chunk) => {
+          const path = (chunk.section.path || []).join(" / ");
+          const header = `<title>${title}</title>\n<url>${url}</url>\n<path>${path}</path>\n`;
+          return `${header}${chunk.content}`;
+        });
+        paddedEmbeddings = await this.embedChunkTexts(texts, url, chunks.length);
+      }
+
+      const transaction = this.db.transaction(() => {
+        this.statements.deleteDocumentsByPageId.run(pageId);
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          const inserted = this.statements.insertDocument.run(
+            pageId,
+            chunk.content,
+            JSON.stringify({
+              types: chunk.types,
+              level: chunk.section.level,
+              path: chunk.section.path,
+            } satisfies DbChunkMetadata),
+            i,
+          );
+
+          if (this.isVectorSearchEnabled && paddedEmbeddings.length > 0) {
+            this.statements.insertEmbedding.run(
+              JSON.stringify(paddedEmbeddings[i]),
+              BigInt(inserted.lastInsertRowid),
+            );
+          }
+        }
+      });
+
+      transaction();
+    } catch (error) {
+      if (error instanceof StoreError) {
+        throw error;
+      }
+      throw new ConnectionError(`Failed to replace chunks for page ${pageId}`, error);
+    }
+  }
+
+  /**
+   * Embeds chunk texts in batches bounded by both character count and item
+   * count, since providers limit each differently.
+   */
+  private async embedChunkTexts(
+    texts: string[],
+    url: string,
+    totalChunks: number,
+  ): Promise<number[][]> {
+    const rawEmbeddings: number[][] = [];
+    let currentBatch: string[] = [];
+    let currentBatchSize = 0;
+    let batchCount = 0;
+
+    const processBatch = async () => {
+      batchCount++;
+      const batchTexts = currentBatch;
+      const batchChars = currentBatchSize;
+      try {
+        rawEmbeddings.push(...(await this.embedDocumentsWithRetry(batchTexts)));
+      } catch (error) {
+        throw this.createEmbeddingConnectionError(error, {
+          url,
+          batchIndex: batchCount,
+          batchTextCount: batchTexts.length,
+          batchChars,
+          totalChunks,
+        });
+      }
+      currentBatch = [];
+      currentBatchSize = 0;
+    };
+
+    for (const text of texts) {
+      if (
+        currentBatchSize + text.length > this.embeddingBatchChars &&
+        currentBatch.length > 0
+      ) {
+        await processBatch();
+      }
+      currentBatch.push(text);
+      currentBatchSize += text.length;
+      if (currentBatch.length >= this.embeddingBatchSize) {
+        await processBatch();
+      }
+    }
+    if (currentBatch.length > 0) {
+      await processBatch();
+    }
+
+    return rawEmbeddings.map((vector) => this.padVector(vector));
   }
 
   /**

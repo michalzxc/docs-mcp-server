@@ -13,8 +13,49 @@ export interface DbPage {
   source_content_type: string | null;
   content_type: string | null;
   depth: number | null;
+  /**
+   * The page's Markdown before any cleanup pass ran, kept so cleanup can be
+   * re-run with a different prompt or model without re-fetching the page.
+   * NULL unless cleanup is enabled, so it costs nothing when the feature is off.
+   */
+  raw_content: string | null;
+  cleanup_status: string | null;
+  /** Identifies the model + prompt + slice size the page was cleaned with. */
+  cleanup_fingerprint: string | null;
+  cleanup_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Outcome of a cleanup pass over one page.
+ *
+ * `partial` is the interesting one: some slices failed validation or the model
+ * call errored, and those slices kept their original text. The page is usable,
+ * but it is not fully repaired and a later sweep should try again.
+ */
+export enum PageCleanupStatus {
+  CLEAN = "clean",
+  PARTIAL = "partial",
+  FAILED = "failed",
+  SKIPPED = "skipped",
+  /** raw_content was rebuilt from stored chunks, not captured at scrape time. */
+  RECONSTRUCTED = "reconstructed",
+}
+
+/**
+ * A page as the cleanup pass sees it: the stored original plus the state of
+ * the last pass over it. A projection of `pages`, not the whole row — cleanup
+ * has no business with etag, depth or content types.
+ */
+export interface CleanupPage {
+  id: number;
+  version_id: number;
+  url: string;
+  title: string | null;
+  raw_content: string | null;
+  cleanup_status: string | null;
+  cleanup_fingerprint: string | null;
 }
 
 /**
