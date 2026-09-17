@@ -8,6 +8,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import { cleanupFingerprint, DEFAULT_CLEANUP_SYSTEM_PROMPT } from "../cleanup/prompt";
 import type { EventBusService } from "../events/EventBusService";
 import { EventType } from "../events/types";
 import { ScraperRegistry, ScraperService } from "../scraper";
@@ -19,6 +20,7 @@ import type { AppConfig } from "../utils/config";
 import { logger } from "../utils/logger";
 import { CancellationError, PipelineStateError } from "./errors";
 import { PipelineWorker } from "./PipelineWorker"; // Import the worker
+import { Scheduler, type SchedulerStore } from "./Scheduler";
 import type { IPipeline } from "./trpc/interfaces";
 import type { InternalPipelineJob, PipelineJob } from "./types";
 import { PipelineJobKind, PipelineJobStatus } from "./types";
@@ -109,6 +111,76 @@ export class PipelineManager implements IPipeline {
   /**
    * Starts the pipeline manager's worker processing.
    */
+  /**
+   * Background maintenance, owned here because the manager is the only thing
+   * that knows whether workers are free. A PipelineClient must never run one:
+   * in distributed mode the coordinator and the worker would both schedule the
+   * same sweep.
+   */
+  private scheduler: Scheduler | undefined;
+
+  /** Jobs queued or running. The scheduler waits for this to reach zero. */
+  busyCount(): number {
+    return this.activeWorkers.size + this.jobQueue.length;
+  }
+
+  /**
+   * Builds the questions the scheduler asks: what most needs repairing, and
+   * what was indexed longest ago.
+   */
+  private createSchedulerStore(): SchedulerStore {
+    return {
+      findVersionNeedingCleanup: async (fingerprint: string) => {
+        const libraries = await this.store.listLibraries();
+        let best: { library: string; version: string | null; pending: number } | null =
+          null;
+
+        for (const summary of libraries) {
+          for (const version of summary.versions) {
+            if (version.status !== VersionStatus.COMPLETED) continue;
+            const pending = await this.store.countPagesNeedingCleanup(
+              version.id,
+              fingerprint,
+            );
+            if (pending > 0 && (!best || pending > best.pending)) {
+              best = {
+                library: summary.library,
+                version: version.ref.version || null,
+                pending,
+              };
+            }
+          }
+        }
+
+        return best ? { library: best.library, version: best.version } : null;
+      },
+
+      findVersionNeedingRefresh: async (olderThanHours: number) => {
+        const libraries = await this.store.listLibraries();
+        const cutoff = Date.now() - olderThanHours * 60 * 60 * 1000;
+        let oldest: { library: string; version: string | null; at: number } | null = null;
+
+        for (const summary of libraries) {
+          for (const version of summary.versions) {
+            if (version.status !== VersionStatus.COMPLETED) continue;
+            if (!version.indexedAt) continue;
+            const at = new Date(version.indexedAt).getTime();
+            if (Number.isNaN(at) || at > cutoff) continue;
+            if (!oldest || at < oldest.at) {
+              oldest = {
+                library: summary.library,
+                version: version.ref.version || null,
+                at,
+              };
+            }
+          }
+        }
+
+        return oldest ? { library: oldest.library, version: oldest.version } : null;
+      },
+    };
+  }
+
   async start(): Promise<void> {
     if (this.isRunning) {
       logger.warn("⚠️  PipelineManager is already running.");
@@ -130,6 +202,20 @@ export class PipelineManager implements IPipeline {
     this._processQueue().catch((error) => {
       logger.error(`❌ Error in processQueue during start: ${error}`);
     }); // Start processing any existing jobs
+
+    // Maintenance runs only where jobs are actually executed.
+    this.scheduler = new Scheduler(
+      this,
+      this.createSchedulerStore(),
+      this.appConfig,
+      () =>
+        cleanupFingerprint(
+          this.appConfig.cleanup.model,
+          this.appConfig.cleanup.systemPrompt || DEFAULT_CLEANUP_SYSTEM_PROMPT,
+          this.appConfig.cleanup.sliceChars,
+        ),
+    );
+    this.scheduler.start();
   }
 
   /**
@@ -220,6 +306,8 @@ export class PipelineManager implements IPipeline {
       return;
     }
     this.isRunning = false;
+    this.scheduler?.stop();
+    this.scheduler = undefined;
     logger.debug("PipelineManager stopping. No new jobs will be started.");
 
     // Note: Strategy cleanup now happens per-scrape in ScraperService.scrape()
