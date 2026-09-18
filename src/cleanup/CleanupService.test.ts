@@ -101,6 +101,23 @@ describe("changedRegion", () => {
     expect(region.before.length).toBeLessThan(250);
   });
 
+  it("stays short when changes are scattered across a long slice", () => {
+    // The first attempt only trimmed the common prefix and suffix, so a slice
+    // repaired near both ends returned almost all of itself. Measured against
+    // the live job: a 4,763-character "excerpt" — the wall of text this is
+    // meant to prevent. The earlier test passed because it changed one spot.
+    const filler = "Bot protection and IP rate limitation. ".repeat(60);
+    const before = `# Limiter¶ ${filler} answer-captcha¶ tail`;
+    const after = `# Limiter ${filler} answer-captcha tail`;
+
+    const region = changedRegion(before, after);
+
+    expect(region.before.length).toBeLessThan(350);
+    expect(region.after.length).toBeLessThan(350);
+    // Still shows the first repair rather than an arbitrary slice of prose.
+    expect(region.before).toContain("Limiter¶");
+  });
+
   it("keeps the whole text when it is shorter than the context window", () => {
     const region = changedRegion("PULUMI\\_STACK", "PULUMI_STACK");
 

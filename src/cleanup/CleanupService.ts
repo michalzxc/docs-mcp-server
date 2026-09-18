@@ -91,6 +91,18 @@ export interface CleanupSliceEvent {
 const CONTEXT_CHARS = 70;
 
 /**
+ * Ceiling on the changed span itself.
+ *
+ * Trimming the common prefix and suffix is not enough on its own: a slice with
+ * repairs near both ends has a "changed span" covering nearly all of it, and
+ * the excerpt degenerates to the whole slice. Observed on a real run — a slice
+ * with one repair early and another late produced a 4,763-character excerpt,
+ * which is the wall of text this exists to prevent. Past this point the window
+ * is cut and the summary carries the full count.
+ */
+const MAX_SPAN_CHARS = 160;
+
+/**
  * The part of the slice that actually changed, plus a little context.
  *
  * Sending the head of the slice instead was useless in practice: a repair that
@@ -122,9 +134,14 @@ export function changedRegion(
     endAfter--;
   }
 
+  // Show the first change with bounded context rather than everything between
+  // the first and the last.
+  const spanBefore = Math.min(endBefore, start + MAX_SPAN_CHARS);
+  const spanAfter = Math.min(endAfter, start + MAX_SPAN_CHARS);
+
   const from = Math.max(0, start - CONTEXT_CHARS);
-  const toBefore = Math.min(before.length, endBefore + CONTEXT_CHARS);
-  const toAfter = Math.min(after.length, endAfter + CONTEXT_CHARS);
+  const toBefore = Math.min(before.length, spanBefore + CONTEXT_CHARS);
+  const toAfter = Math.min(after.length, spanAfter + CONTEXT_CHARS);
   const lead = from > 0 ? "…" : "";
 
   const tidy = (text: string) => text.replace(/\s+/g, " ");
