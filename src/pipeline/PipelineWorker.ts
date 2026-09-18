@@ -130,7 +130,12 @@ export class PipelineWorker {
         } else if (event.before !== undefined && event.after !== undefined) {
           live.slicesRepaired++;
           live.recent = [
-            { url: event.url, before: event.before, after: event.after },
+            {
+              url: event.url,
+              before: event.before,
+              after: event.after,
+              summary: event.summary ?? "",
+            },
             ...live.recent,
           ].slice(0, RECENT_LIMIT);
         }

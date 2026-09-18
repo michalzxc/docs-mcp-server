@@ -78,19 +78,83 @@ export interface CleanupSliceEvent {
   /** 1-based, for "slice 3 of 14". */
   sliceIndex: number;
   sliceTotal: number;
-  /** Set when the answer passed validation. */
+  /** Set when the answer passed validation: the region that actually changed. */
   before?: string;
   after?: string;
+  /** Plain-language account of the change, e.g. "−2 escapes · −6 chars". */
+  summary?: string;
   /** Set when the answer was refused, naming the gate that refused it. */
   rejected?: string;
 }
 
-/** Enough of a slice to see what changed, not enough to ship the page. */
-const EXCERPT_CHARS = 240;
+/** Context kept either side of the change, so it reads in situ. */
+const CONTEXT_CHARS = 70;
 
-function excerpt(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > EXCERPT_CHARS ? `${flat.slice(0, EXCERPT_CHARS)}…` : flat;
+/**
+ * The part of the slice that actually changed, plus a little context.
+ *
+ * Sending the head of the slice instead was useless in practice: a repair that
+ * removed one character three paragraphs down produced two identical-looking
+ * walls of text, and the reader had no way to see what had happened. Trimming
+ * the common prefix and suffix also makes the payload a fraction of the size.
+ */
+export function changedRegion(
+  before: string,
+  after: string,
+): { before: string; after: string } {
+  let start = 0;
+  while (
+    start < before.length &&
+    start < after.length &&
+    before[start] === after[start]
+  ) {
+    start++;
+  }
+
+  let endBefore = before.length;
+  let endAfter = after.length;
+  while (
+    endBefore > start &&
+    endAfter > start &&
+    before[endBefore - 1] === after[endAfter - 1]
+  ) {
+    endBefore--;
+    endAfter--;
+  }
+
+  const from = Math.max(0, start - CONTEXT_CHARS);
+  const toBefore = Math.min(before.length, endBefore + CONTEXT_CHARS);
+  const toAfter = Math.min(after.length, endAfter + CONTEXT_CHARS);
+  const lead = from > 0 ? "…" : "";
+
+  const tidy = (text: string) => text.replace(/\s+/g, " ");
+
+  return {
+    before: `${lead}${tidy(before.slice(from, toBefore))}${toBefore < before.length ? "…" : ""}`,
+    after: `${lead}${tidy(after.slice(from, toAfter))}${toAfter < after.length ? "…" : ""}`,
+  };
+}
+
+const ESCAPE_PATTERN = /\\[_*\-.+#]/g;
+const TAG_PATTERN = /<\/?[a-zA-Z][a-zA-Z0-9-]*(\s[^>]*)?>/g;
+
+/** Says what changed in words, so the diff does not have to be read closely. */
+export function summarise(before: string, after: string): string {
+  const count = (text: string, pattern: RegExp) => (text.match(pattern) ?? []).length;
+  const parts: string[] = [];
+
+  const escapes = count(before, ESCAPE_PATTERN) - count(after, ESCAPE_PATTERN);
+  if (escapes !== 0) parts.push(`${escapes > 0 ? "−" : "+"}${Math.abs(escapes)} escapes`);
+
+  const tags = count(before, TAG_PATTERN) - count(after, TAG_PATTERN);
+  if (tags !== 0) parts.push(`${tags > 0 ? "−" : "+"}${Math.abs(tags)} html tags`);
+
+  const chars = before.length - after.length;
+  if (chars !== 0) parts.push(`${chars > 0 ? "−" : "+"}${Math.abs(chars)} chars`);
+
+  // Same length and same counts, but not the same text: only layout moved.
+  if (parts.length === 0) return "whitespace only";
+  return parts.join(" · ");
 }
 
 export interface CleanVersionOptions {
@@ -325,12 +389,14 @@ export class CleanupService {
       } else {
         repairedSlices.push(cleaned);
         repaired++;
+        const region = changedRegion(slice, cleaned);
         onSlice?.({
           url: page.url,
           sliceIndex: index + 1,
           sliceTotal: slices.length,
-          before: excerpt(slice),
-          after: excerpt(cleaned),
+          before: region.before,
+          after: region.after,
+          summary: summarise(slice, cleaned),
         });
       }
     }

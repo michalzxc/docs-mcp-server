@@ -35,10 +35,12 @@ export enum PipelineJobKind {
 export interface CleanupRepairSample {
   /** Page the slice belongs to. */
   url: string;
-  /** The slice as stored, truncated for transport. */
+  /** The region of the slice that changed, with a little context. */
   before: string;
-  /** The model's accepted answer, truncated the same way. */
+  /** The same region after the accepted repair. */
   after: string;
+  /** What changed, in words: "−2 escapes · −6 chars", or "whitespace only". */
+  summary: string;
 }
 
 /**

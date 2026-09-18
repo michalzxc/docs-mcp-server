@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CleanupPage } from "../store/types";
 import { PageCleanupStatus } from "../store/types";
 import type { AppConfig } from "../utils/config";
-import { CleanupService, type CleanupStore, stripFenceWrapper } from "./CleanupService";
+import {
+  CleanupService,
+  type CleanupStore,
+  changedRegion,
+  stripFenceWrapper,
+  summarise,
+} from "./CleanupService";
 
 const DIRTY = "## Title\n\n<dd>Sets the stack.</dd>\n\nUse PULUMI\\_STACK first.";
 const CLEAN = "## Title\n\nSets the stack.\n\nUse PULUMI_STACK first.";
@@ -74,6 +80,48 @@ describe("stripFenceWrapper", () => {
   it("leaves a document that merely contains a fence alone", () => {
     const text = "Intro\n\n```bash\necho hi\n```\n\nOutro";
     expect(stripFenceWrapper(text)).toBe(text);
+  });
+});
+
+describe("changedRegion", () => {
+  it("centres the excerpt on a one-character change deep inside a slice", () => {
+    // The defect this guards against shipped: the live view sent the head of
+    // the slice, so a repair further down produced two identical-looking walls
+    // of text and the reader could not see what had happened.
+    const filler = "Engines configured by default in settings.yml. ".repeat(12);
+    const before = `${filler}### without further subgrouping¶ |${filler}`;
+    const after = `${filler}### without further subgrouping |${filler}`;
+
+    const region = changedRegion(before, after);
+
+    expect(region.before).not.toEqual(region.after);
+    expect(region.before).toContain("subgrouping¶");
+    expect(region.after).not.toContain("¶");
+    // Readable: the slice is over a thousand characters, the excerpt is not.
+    expect(region.before.length).toBeLessThan(250);
+  });
+
+  it("keeps the whole text when it is shorter than the context window", () => {
+    const region = changedRegion("PULUMI\\_STACK", "PULUMI_STACK");
+
+    expect(region.before).toBe("PULUMI\\_STACK");
+    expect(region.after).toBe("PULUMI_STACK");
+  });
+});
+
+describe("summarise", () => {
+  it("names removed escapes", () => {
+    expect(summarise("a\\_b and c\\_d", "a_b and c_d")).toContain("−2 escapes");
+  });
+
+  it("names removed html", () => {
+    expect(summarise("<dd>x</dd>", "x")).toContain("html tags");
+  });
+
+  it("reports whitespace when nothing else changed", () => {
+    // Same length and same counts, but not the same text: only layout moved,
+    // which would otherwise be summarised as no change at all.
+    expect(summarise("a b", "a\nb")).toBe("whitespace only");
   });
 });
 

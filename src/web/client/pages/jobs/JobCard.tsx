@@ -25,11 +25,69 @@ export interface JobCardProps {
 }
 
 /**
+ * Splits one side of a repair into the common head, the part that differs, and
+ * the common tail, so the change can be marked instead of hunted for.
+ *
+ * Cheap because the server sends only the changed region: these strings are a
+ * couple of hundred characters, not whole pages.
+ */
+function splitDiff(text: string, other: string) {
+  let start = 0;
+  while (start < text.length && start < other.length && text[start] === other[start]) {
+    start++;
+  }
+
+  let endText = text.length;
+  let endOther = other.length;
+  while (
+    endText > start &&
+    endOther > start &&
+    text[endText - 1] === other[endOther - 1]
+  ) {
+    endText--;
+    endOther--;
+  }
+
+  return {
+    head: text.slice(0, start),
+    changed: text.slice(start, endText),
+    tail: text.slice(endText),
+  };
+}
+
+const MARK_STYLE = {
+  background: "var(--mark, rgba(255, 196, 0, 0.32))",
+  borderRadius: 2,
+  padding: "0 1px",
+};
+
+/** One side of a repair, with the differing span marked. */
+function DiffLine({ sign, text, other }: { sign: string; text: string; other: string }) {
+  const { head, changed, tail } = splitDiff(text, other);
+
+  return (
+    <div
+      className="mono"
+      style={{ fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+    >
+      <span className="muted">{sign} </span>
+      {head}
+      {changed ? <span style={MARK_STYLE}>{changed}</span> : null}
+      {tail}
+    </div>
+  );
+}
+
+/**
  * Live detail of a cleanup job: what it has repaired, and what it just changed.
  *
  * Shown because a cleanup pass was previously silent between page completions —
  * a page with dozens of slices reported nothing for minutes, so a slow job and
  * a hung one were indistinguishable, and every rejection went only to the log.
+ *
+ * Each repair leads with what changed in words, because the diff itself is
+ * often a single character: showing the head of the slice instead produced two
+ * identical-looking walls of text with the repair buried out of sight.
  */
 function CleanupDetail({ job }: { job: Job }) {
   const live = job.cleanupProgress;
@@ -53,17 +111,13 @@ function CleanupDetail({ job }: { job: Job }) {
         <details className="adv">
           <summary>Recent changes</summary>
           {live.recent.map((sample) => (
-            <div key={`${sample.url}-${sample.before}`} style={{ marginBottom: 8 }}>
+            <div key={`${sample.url}-${sample.before}`} style={{ marginBottom: 10 }}>
               <div className="muted" style={{ fontSize: 11 }}>
-                {sample.url}
+                {displayUrl(sample.url)}
+                {sample.summary ? ` · ${sample.summary}` : ""}
               </div>
-              <pre
-                className="mono"
-                style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 11 }}
-              >
-                − {sample.before}
-                {"\n"}+ {sample.after}
-              </pre>
+              <DiffLine sign="−" text={sample.before} other={sample.after} />
+              <DiffLine sign="+" text={sample.after} other={sample.before} />
             </div>
           ))}
           {live.recentRejections.length > 0 ? (
