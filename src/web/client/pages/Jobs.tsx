@@ -12,10 +12,11 @@
  * `trpc.useUtils()` cache invalidation after mutations).
  */
 import { useEffect, useMemo, useState } from "react";
-import { PipelineJobStatus } from "../../../pipeline/types";
+import { PipelineJobKind, PipelineJobStatus } from "../../../pipeline/types";
 import {
   useCancelJob,
   useClearCompletedJobs,
+  useEnqueueCleanupJob,
   useEnqueueScrapeJob,
   useGetJobs,
   useSystemHealth,
@@ -62,6 +63,7 @@ export default function Jobs() {
   const cancelJob = useCancelJob();
   const clearCompletedJobs = useClearCompletedJobs();
   const enqueueScrapeJob = useEnqueueScrapeJob();
+  const enqueueCleanupJob = useEnqueueCleanupJob();
   const confirm = useConfirm();
   const toast = useToast();
   const drawer = useDocumentationDrawer();
@@ -161,6 +163,32 @@ export default function Jobs() {
   }
 
   async function handleRetry(job: Job) {
+    // A cleanup job is retried by cleaning again, never by scraping. Retrying
+    // it as a scrape would delete the version before fetching anything, so the
+    // library would be emptied and then not refilled — the job repairs stored
+    // Markdown and fetches nothing, so it has no site to crawl.
+    if (job.kind === PipelineJobKind.CLEANUP) {
+      setRetryingId(job.id);
+      try {
+        await enqueueCleanupJob.mutateAsync({
+          library: job.library,
+          version: job.version || undefined,
+        });
+        await utils.getJobs.invalidate();
+        toast.success(
+          `Retrying cleanup for ${job.library}${job.version ? ` ${job.version}` : ""}`,
+        );
+      } catch (err) {
+        toast.error(
+          "Failed to retry cleanup",
+          err instanceof Error ? err.message : String(err),
+        );
+      } finally {
+        setRetryingId(null);
+      }
+      return;
+    }
+
     if (!job.scraperOptions) {
       toast.error(
         "Can't retry automatically",

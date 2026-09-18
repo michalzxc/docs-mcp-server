@@ -67,11 +67,24 @@ export class PipelineManager implements IPipeline {
    * Converts internal job representation to public job interface.
    */
   private toPublicJob(job: InternalPipelineJob): PipelineJob {
+    // A cleanup job carries placeholder scraper options so the internal type
+    // stays non-nullable, but they describe no site: the url is empty. Handing
+    // them to a client invites it to treat the job as re-runnable by scraping,
+    // and a scrape deletes the version before it fetches anything — so a single
+    // "retry" on a failed cleanup would empty the library and then fail to
+    // refill it. Publishing null instead makes every client's "can I retry
+    // this?" check answer correctly, including ones written elsewhere.
+    const isCleanup = job.kind === PipelineJobKind.CLEANUP;
+
     return {
       id: job.id,
       library: job.library,
       version: job.version || null, // Convert empty string to null for public API
       status: job.status,
+      // Without this a client cannot tell a cleanup job from a scrape: the
+      // field is optional on the public type, so omitting it was invisible to
+      // the type checker while the UI silently mislabelled every cleanup job.
+      kind: job.kind,
       progress: job.progress,
       error: job.error ? { message: job.error.message } : null,
       createdAt: job.createdAt,
@@ -84,7 +97,7 @@ export class PipelineManager implements IPipeline {
       errorMessage: job.errorMessage,
       updatedAt: job.updatedAt,
       sourceUrl: job.sourceUrl,
-      scraperOptions: job.scraperOptions,
+      scraperOptions: isCleanup ? null : job.scraperOptions,
     };
   }
 

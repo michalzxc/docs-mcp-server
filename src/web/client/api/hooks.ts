@@ -35,6 +35,11 @@ export function useEnqueueRefreshJob() {
   return trpc.enqueueRefreshJob.useMutation();
 }
 
+/** Enqueues a Markdown cleanup job for an already-indexed library version. */
+export function useEnqueueCleanupJob() {
+  return trpc.enqueueCleanupJob.useMutation();
+}
+
 /** Cancels a running or queued pipeline job. */
 export function useCancelJob() {
   return trpc.cancelJob.useMutation();

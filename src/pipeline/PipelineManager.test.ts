@@ -613,6 +613,44 @@ describe("PipelineManager", () => {
     });
   });
 
+  describe("public job shape for cleanup jobs", () => {
+    it("publishes no scraper options for a cleanup job", async () => {
+      // A cleanup job holds placeholder options internally (empty url) so the
+      // internal type can stay non-nullable. Publishing them told clients the
+      // job was re-runnable by scraping, and a scrape deletes the version
+      // before fetching — so one "retry" emptied the library and then failed
+      // to refill it, because the empty url scrapes nothing.
+      const jobId = await manager.enqueueCleanupJob("test-lib", "1.0.0");
+      const job = await manager.getJob(jobId);
+
+      expect(job?.scraperOptions).toBeNull();
+    });
+
+    it("publishes the job kind so a client can tell cleanup from scrape", async () => {
+      // `kind` is optional on the public type, so omitting it from the
+      // serialiser was invisible to the type checker while the UI silently
+      // treated every cleanup job as a scrape.
+      const jobId = await manager.enqueueCleanupJob("test-lib", "1.0.0");
+      const job = await manager.getJob(jobId);
+
+      expect(job?.kind).toBe("cleanup");
+    });
+
+    it("still publishes scraper options for a scrape job", async () => {
+      // The guard above must not be "null for everything": a failed scrape is
+      // retried from exactly these stored options.
+      const jobId = await manager.enqueueScrapeJob("test-lib", "1.0.0", {
+        url: "https://example.com",
+        library: "test-lib",
+        version: "1.0.0",
+      });
+      const job = await manager.getJob(jobId);
+
+      expect(job?.scraperOptions?.url).toBe("https://example.com");
+      expect(job?.kind).toBe("scrape");
+    });
+  });
+
   // --- Refresh Job Tests ---
   describe("enqueueRefreshJob", () => {
     it("should successfully enqueue a refresh job with initial queue", async () => {
