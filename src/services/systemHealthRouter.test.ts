@@ -24,6 +24,7 @@ function baseSystemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
       filter: "dirty",
       systemPrompt: "built-in prompt",
       promptOverridden: false,
+      fingerprint: "test-fingerprint",
     },
     automation: {
       enabled: false,

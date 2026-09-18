@@ -11,12 +11,14 @@ import type { IDocumentManagement } from "./trpc/interfaces";
 import type { DataRouter } from "./trpc/router";
 import type {
   ActivityHistory,
+  CleanupStats,
   DbVersionWithLibrary,
   EmbeddingConfigInfo,
   FindVersionResult,
   LibrarySummary,
   ListVersionChunksOptions,
   ListVersionChunksResult,
+  PageOriginal,
   StoredScraperOptions,
   StoreSearchResult,
   VersionChunkStats,
@@ -157,6 +159,22 @@ export class DocumentManagementClient implements IDocumentManagement {
     return this.client.getVersionStats.query({
       library: ref.library,
       version: ref.version,
+    });
+  }
+
+  async getCleanupStats(ref: VersionRef, fingerprint: string): Promise<CleanupStats> {
+    return this.client.getCleanupStats.query({
+      library: ref.library,
+      version: ref.version,
+      fingerprint,
+    });
+  }
+
+  async getPageOriginal(ref: VersionRef, url: string): Promise<PageOriginal | null> {
+    return this.client.getPageOriginal.query({
+      library: ref.library,
+      version: ref.version,
+      url,
     });
   }
 

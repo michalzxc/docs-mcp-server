@@ -22,6 +22,7 @@ import {
 import type {
   ActivityHistory,
   CleanupPage,
+  CleanupStats,
   DbVersionWithLibrary,
   EmbeddingConfigInfo,
   FindVersionResult,
@@ -29,6 +30,7 @@ import type {
   ListVersionChunksOptions,
   ListVersionChunksResult,
   PageCleanupStatus,
+  PageOriginal,
   ScraperConfig,
   StoreSearchResult,
   VersionChunkStats,
@@ -433,6 +435,16 @@ export class DocumentManagementService {
     fingerprint: string,
   ): Promise<number> {
     return this.store.countPagesNeedingCleanup(versionId, fingerprint);
+  }
+
+  /** Cleanup state of a version, for the admin UI's library page. */
+  async getCleanupStats(ref: VersionRef, fingerprint: string): Promise<CleanupStats> {
+    return this.store.getCleanupStats(ref.library, ref.version ?? "", fingerprint);
+  }
+
+  /** A page's stored original beside the text now serving search. */
+  async getPageOriginal(ref: VersionRef, url: string): Promise<PageOriginal | null> {
+    return this.store.getPageOriginal(ref.library, ref.version ?? "", url);
   }
 
   async getChunksByPageId(

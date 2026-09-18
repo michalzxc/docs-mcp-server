@@ -98,6 +98,9 @@ export class PipelineManager implements IPipeline {
       updatedAt: job.updatedAt,
       sourceUrl: job.sourceUrl,
       scraperOptions: isCleanup ? null : job.scraperOptions,
+      // Omitting this would hide the live cleanup detail from every client, the
+      // same way `kind` was silently dropped.
+      cleanupProgress: job.cleanupProgress,
     };
   }
 

@@ -9,7 +9,7 @@ import type { DocumentManagementService } from "../store";
 import type { AppConfig } from "../utils/config";
 import { logger } from "../utils/logger";
 import { CancellationError } from "./errors";
-import type { InternalPipelineJob } from "./types";
+import type { CleanupJobProgress, InternalPipelineJob } from "./types";
 import { PipelineJobKind } from "./types";
 
 /**
@@ -70,6 +70,37 @@ export class PipelineWorker {
     const service = new CleanupService(this.store, this.appConfig);
     logger.info(`🧹 Cleaning markdown for ${library}@${version || "latest"}`);
 
+    // Live detail for the Jobs view, kept on the job itself rather than in the
+    // scrape-shaped progress event. Capped and truncated: a pass repairs
+    // thousands of slices and every event reaches every open browser.
+    const RECENT_LIMIT = 5;
+    const live: CleanupJobProgress = {
+      slicesRepaired: 0,
+      slicesKept: 0,
+      slicesRejected: 0,
+      recent: [],
+      recentRejections: [],
+    };
+    job.cleanupProgress = live;
+
+    let pagesDone = 0;
+    let pagesTotal = 0;
+    let currentUrl = "";
+
+    // Reuse the scrape progress shape so the Jobs view, the event bus and the
+    // database counters need no special case for cleanup.
+    const emitProgress = () => {
+      void callbacks.onJobProgress?.(job, {
+        pagesScraped: pagesDone,
+        totalPages: pagesTotal,
+        totalDiscovered: pagesTotal,
+        currentUrl,
+        depth: 0,
+        maxDepth: 0,
+        result: null,
+      } as unknown as ScraperProgressEvent);
+    };
+
     const summary = await service.cleanVersion(
       job.versionId,
       {
@@ -78,17 +109,32 @@ export class PipelineWorker {
         signal: abortController.signal,
       },
       (progress) => {
-        // Reuse the scrape progress shape so the Jobs view, the event bus and
-        // the database counters need no special case for cleanup.
-        void callbacks.onJobProgress?.(job, {
-          pagesScraped: progress.pagesDone,
-          totalPages: progress.pagesTotal,
-          totalDiscovered: progress.pagesTotal,
-          currentUrl: progress.page.url,
-          depth: 0,
-          maxDepth: 0,
-          result: null,
-        } as unknown as ScraperProgressEvent);
+        pagesDone = progress.pagesDone;
+        pagesTotal = progress.pagesTotal;
+        currentUrl = progress.page.url;
+        emitProgress();
+      },
+      (event) => {
+        // Per slice, so a page that takes minutes still says what it is doing.
+        currentUrl = event.url;
+        if (event.rejected !== undefined) {
+          if (event.rejected === "kept") {
+            live.slicesKept++;
+          } else {
+            live.slicesRejected++;
+            live.recentRejections = [event.rejected, ...live.recentRejections].slice(
+              0,
+              RECENT_LIMIT,
+            );
+          }
+        } else if (event.before !== undefined && event.after !== undefined) {
+          live.slicesRepaired++;
+          live.recent = [
+            { url: event.url, before: event.before, after: event.after },
+            ...live.recent,
+          ].slice(0, RECENT_LIMIT);
+        }
+        emitProgress();
       },
     );
 

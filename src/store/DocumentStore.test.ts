@@ -8,7 +8,7 @@ import { loadConfig, markVectorDimensionSource } from "../utils/config";
 import { DocumentStore } from "./DocumentStore";
 import { EmbeddingConfig } from "./embeddings/EmbeddingConfig";
 import { DimensionError, EmbeddingModelChangedError } from "./errors";
-import { VersionStatus } from "./types";
+import { PageCleanupStatus, VersionStatus } from "./types";
 
 const mockEmbeddingDimension = vi.hoisted(() => ({ value: 1536 }));
 const mockEmbeddingCalls = vi.hoisted(() => ({ query: 0, documents: 0 }));
@@ -112,6 +112,103 @@ function createScrapeResult(
     lastModified: options?.lastModified,
   } satisfies ScrapeResult;
 }
+
+describe("DocumentStore - cleanup reporting", () => {
+  let store: DocumentStore;
+
+  beforeEach(async () => {
+    store = new DocumentStore(":memory:", appConfig);
+    await store.initialize();
+  });
+
+  afterEach(async () => {
+    if (store) {
+      await store.shutdown();
+    }
+  });
+
+  async function seedPage(url: string, content: string) {
+    await store.addDocuments(
+      "cleanlib",
+      "1.0.0",
+      1,
+      createScrapeResult("Page", url, content),
+    );
+  }
+
+  it("counts a never-cleaned page as needing cleanup", async () => {
+    await seedPage("https://example.com/a", "some text");
+
+    const stats = await store.getCleanupStats("cleanlib", "1.0.0", "fp-current");
+
+    expect(stats.totalPages).toBe(1);
+    expect(stats.unprocessed).toBe(1);
+    expect(stats.needingCleanup).toBe(1);
+    expect(stats.lastCleanupAt).toBeNull();
+  });
+
+  it("counts a page cleaned under a different prompt as needing cleanup again", async () => {
+    // Editing the prompt changes the fingerprint and makes every page stale
+    // without rewriting a row, so this count is only meaningful relative to the
+    // fingerprint in force. A test that used one fingerprint would never notice
+    // the difference.
+    await seedPage("https://example.com/a", "some text");
+    const page = await store.getPageOriginal(
+      "cleanlib",
+      "1.0.0",
+      "https://example.com/a",
+    );
+    expect(page).not.toBeNull();
+
+    const pages = await store.getPagesNeedingCleanup(1, "fp-old", 10);
+    await store.markPageCleanup(pages[0].id, PageCleanupStatus.CLEAN, "fp-old");
+
+    const underOld = await store.getCleanupStats("cleanlib", "1.0.0", "fp-old");
+    const underNew = await store.getCleanupStats("cleanlib", "1.0.0", "fp-new");
+
+    expect(underOld.clean).toBe(1);
+    expect(underOld.needingCleanup).toBe(0);
+    expect(underNew.clean).toBe(1);
+    expect(underNew.needingCleanup).toBe(1);
+    expect(underOld.lastCleanupAt).not.toBeNull();
+  });
+
+  it("returns zeroes for a version that does not exist", async () => {
+    // The library page asks for this while the user is still picking a version.
+    const stats = await store.getCleanupStats("nosuchlib", "9.9.9", "fp-current");
+
+    expect(stats.totalPages).toBe(0);
+    expect(stats.needingCleanup).toBe(0);
+  });
+
+  it("reports a null original for a page indexed before cleanup existed", async () => {
+    // raw_content is only written when cleanup is enabled, so most pages in an
+    // existing index have none. The before/after view must say so rather than
+    // present the current text as if it were the original.
+    await seedPage("https://example.com/b", "current text");
+
+    const page = await store.getPageOriginal(
+      "cleanlib",
+      "1.0.0",
+      "https://example.com/b",
+    );
+
+    expect(page?.original).toBeNull();
+    expect(page?.current).toContain("current text");
+  });
+
+  it("returns null for a url that is not in this version", async () => {
+    await seedPage("https://example.com/b", "current text");
+
+    const page = await store.getPageOriginal(
+      "cleanlib",
+      "1.0.0",
+      "https://example.com/zz",
+    );
+
+    expect(page).toBeNull();
+  });
+});
 
 /**
  * Tests for DocumentStore with embeddings enabled

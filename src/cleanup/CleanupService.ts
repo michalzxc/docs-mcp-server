@@ -61,6 +61,38 @@ export interface CleanupProgress {
   page: PageCleanupResult;
 }
 
+/**
+ * One slice's outcome, reported as it happens.
+ *
+ * Page-level progress drives a progress bar but cannot answer the question
+ * anyone actually asks while a pass runs: what is it changing? A page can hold
+ * dozens of slices and take minutes, and nothing was reported in between, so a
+ * slow page and a hung one looked identical from outside. Rejections were
+ * written to the log and then discarded.
+ *
+ * Excerpts are truncated here rather than at the transport, so the cap holds
+ * however this is consumed.
+ */
+export interface CleanupSliceEvent {
+  url: string;
+  /** 1-based, for "slice 3 of 14". */
+  sliceIndex: number;
+  sliceTotal: number;
+  /** Set when the answer passed validation. */
+  before?: string;
+  after?: string;
+  /** Set when the answer was refused, naming the gate that refused it. */
+  rejected?: string;
+}
+
+/** Enough of a slice to see what changed, not enough to ship the page. */
+const EXCERPT_CHARS = 240;
+
+function excerpt(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > EXCERPT_CHARS ? `${flat.slice(0, EXCERPT_CHARS)}…` : flat;
+}
+
 export interface CleanVersionOptions {
   /** Clean every page, not only those carrying artefacts. */
   full?: boolean;
@@ -177,6 +209,7 @@ export class CleanupService {
     versionId: number,
     options: CleanVersionOptions = {},
     onProgress?: (progress: CleanupProgress) => void,
+    onSlice?: (event: CleanupSliceEvent) => void,
   ): Promise<CleanupSummary> {
     const fingerprint = options.force ? `${this.fingerprint}-forced` : this.fingerprint;
     const summary: CleanupSummary = {
@@ -204,10 +237,14 @@ export class CleanupService {
       for (const page of pages) {
         if (options.signal?.aborted) break;
 
-        const result = await this.cleanPage(page, {
-          full: options.full ?? this.config.cleanup.filter === "all",
-          signal: options.signal,
-        });
+        const result = await this.cleanPage(
+          page,
+          {
+            full: options.full ?? this.config.cleanup.filter === "all",
+            signal: options.signal,
+          },
+          onSlice,
+        );
 
         summary.pagesConsidered++;
         pagesDone++;
@@ -237,6 +274,7 @@ export class CleanupService {
   async cleanPage(
     page: CleanupPage,
     options: { full?: boolean; signal?: AbortSignal } = {},
+    onSlice?: (event: CleanupSliceEvent) => void,
   ): Promise<PageCleanupResult> {
     const fingerprint = this.fingerprint;
     const source = await this.resolveSource(page);
@@ -258,20 +296,42 @@ export class CleanupService {
     let repaired = 0;
     let kept = 0;
 
-    for (const slice of slices) {
+    for (const [index, slice] of slices.entries()) {
       if (options.signal?.aborted) {
         repairedSlices.push(slice);
         kept++;
         continue;
       }
 
-      const cleaned = await this.repairSlice(slice, page.url, options.signal);
+      let rejection: string | undefined;
+      const cleaned = await this.repairSlice(
+        slice,
+        page.url,
+        options.signal,
+        (reason) => {
+          rejection = reason;
+        },
+      );
+
       if (cleaned === null) {
         repairedSlices.push(slice);
         kept++;
+        onSlice?.({
+          url: page.url,
+          sliceIndex: index + 1,
+          sliceTotal: slices.length,
+          rejected: rejection ?? "kept",
+        });
       } else {
         repairedSlices.push(cleaned);
         repaired++;
+        onSlice?.({
+          url: page.url,
+          sliceIndex: index + 1,
+          sliceTotal: slices.length,
+          before: excerpt(slice),
+          after: excerpt(cleaned),
+        });
       }
     }
 
@@ -316,6 +376,7 @@ export class CleanupService {
     slice: string,
     url: string,
     signal?: AbortSignal,
+    onReject?: (reason: string) => void,
   ): Promise<string | null> {
     const limiter = getLimiter(this.config);
 
@@ -334,12 +395,14 @@ export class CleanupService {
       });
       if (!verdict.ok) {
         logger.warn(`⚠️  Cleanup rejected for ${url}: ${verdict.reason}`);
+        onReject?.(verdict.reason);
         return null;
       }
       return answer;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       logger.warn(`⚠️  Cleanup call failed for ${url}: ${detail}`);
+      onReject?.(detail);
       return null;
     }
   }

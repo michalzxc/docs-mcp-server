@@ -6,12 +6,14 @@ import type { ScraperOptions } from "../../scraper/types";
 import type { EmbeddingModelConfig } from "../embeddings/EmbeddingConfig";
 import type {
   ActivityHistory,
+  CleanupStats,
   DbVersionWithLibrary,
   EmbeddingConfigInfo,
   FindVersionResult,
   LibrarySummary,
   ListVersionChunksOptions,
   ListVersionChunksResult,
+  PageOriginal,
   StoredScraperOptions,
   StoreSearchResult,
   VersionChunkStats,
@@ -71,6 +73,12 @@ export interface IDocumentManagement {
     options?: Partial<ListVersionChunksOptions>,
   ): Promise<ListVersionChunksResult>;
   getVersionStats(ref: VersionRef): Promise<VersionChunkStats>;
+  /**
+   * Cleanup state of a version. The fingerprint comes from the caller because
+   * "needs cleaning" is relative to the prompt and model in force.
+   */
+  getCleanupStats(ref: VersionRef, fingerprint: string): Promise<CleanupStats>;
+  getPageOriginal(ref: VersionRef, url: string): Promise<PageOriginal | null>;
   getActivityHistory(days?: number): Promise<ActivityHistory>;
   getVersionComposition(ref: VersionRef): Promise<VersionComposition>;
 }

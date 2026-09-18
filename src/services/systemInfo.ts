@@ -10,7 +10,7 @@
  * separately; see {@link ./appRouter}.
  */
 import type { AppServerConfig } from "../app/AppServerConfig";
-import { DEFAULT_CLEANUP_SYSTEM_PROMPT } from "../cleanup/prompt";
+import { cleanupFingerprint, DEFAULT_CLEANUP_SYSTEM_PROMPT } from "../cleanup/prompt";
 import type { AppConfig } from "../utils/config";
 
 /** Which top-level services this process was started with. */
@@ -72,6 +72,12 @@ export interface SystemInfoCleanup {
   systemPrompt: string;
   /** False when `systemPrompt` is the built-in default. */
   promptOverridden: boolean;
+  /**
+   * Identifies model + prompt + slice size together. A page cleaned under a
+   * different fingerprint is stale, which is how the library page counts what
+   * still needs work without re-reading a single page.
+   */
+  fingerprint: string;
 }
 
 /** The maintenance window, and what it is allowed to queue inside it. */
@@ -153,6 +159,11 @@ export function buildSystemInfo(
       // the instruction actually in force rather than what is configured.
       systemPrompt: appConfig.cleanup.systemPrompt || DEFAULT_CLEANUP_SYSTEM_PROMPT,
       promptOverridden: Boolean(appConfig.cleanup.systemPrompt),
+      fingerprint: cleanupFingerprint(
+        appConfig.cleanup.model,
+        appConfig.cleanup.systemPrompt || DEFAULT_CLEANUP_SYSTEM_PROMPT,
+        appConfig.cleanup.sliceChars,
+      ),
     },
     automation: {
       enabled: Boolean(appConfig.automation.enabled),

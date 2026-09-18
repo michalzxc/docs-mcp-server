@@ -284,6 +284,52 @@ export function createDataRouter(trpc: unknown) {
         },
       ),
 
+    getCleanupStats: tt.procedure
+      .input(
+        z.object({
+          library: nonEmpty,
+          version: optionalVersion,
+          // Supplied by the caller: the store has no view of the running
+          // cleanup configuration, and staleness is defined by it.
+          fingerprint: z.string().min(1),
+        }),
+      )
+      .query(
+        async ({
+          ctx,
+          input,
+        }: {
+          ctx: DataTrpcContext;
+          input: {
+            library: string;
+            version: string | null | undefined;
+            fingerprint: string;
+          };
+        }) => {
+          return await ctx.docService.getCleanupStats(
+            { library: input.library, version: input.version ?? "" },
+            input.fingerprint,
+          );
+        },
+      ),
+
+    getPageOriginal: tt.procedure
+      .input(z.object({ library: nonEmpty, version: optionalVersion, url: nonEmpty }))
+      .query(
+        async ({
+          ctx,
+          input,
+        }: {
+          ctx: DataTrpcContext;
+          input: { library: string; version: string | null | undefined; url: string };
+        }) => {
+          return await ctx.docService.getPageOriginal(
+            { library: input.library, version: input.version ?? "" },
+            input.url,
+          );
+        },
+      ),
+
     getVersionStats: tt.procedure
       .input(z.object({ library: nonEmpty, version: optionalVersion }))
       .query(

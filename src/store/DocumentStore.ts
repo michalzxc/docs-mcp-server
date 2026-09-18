@@ -22,10 +22,12 @@ import {
 } from "./errors";
 import type {
   ActivityHistory,
+  CleanupStats,
   DbChunkMetadata,
   DbChunkRank,
   ListVersionChunksOptions,
   ListVersionChunksResult,
+  PageOriginal,
   StoredScraperOptions,
   VersionChunkListItem,
   VersionChunkStats,
@@ -173,6 +175,8 @@ export class DocumentStore {
     getChunksByPageId: Database.Statement<[number]>;
     getPagesNeedingCleanup: Database.Statement<[number, string, number]>;
     countPagesNeedingCleanup: Database.Statement<[number, string]>;
+    getCleanupStats: Database.Statement<[string, number]>;
+    getPageOriginalByUrl: Database.Statement<[number, string]>;
   };
 
   /**
@@ -333,6 +337,27 @@ export class DocumentStore {
         `SELECT COUNT(*) as count FROM pages
          WHERE version_id = ?
            AND (cleanup_fingerprint IS NULL OR cleanup_fingerprint != ?)`,
+      ),
+      // One pass over the version's pages: the library page wants every count
+      // at once, and a query per status would read the same rows six times.
+      getCleanupStats: this.db.prepare<[string, number]>(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN cleanup_status IS NULL THEN 1 ELSE 0 END) AS unprocessed,
+           SUM(CASE WHEN cleanup_status = 'clean' THEN 1 ELSE 0 END) AS clean,
+           SUM(CASE WHEN cleanup_status = 'partial' THEN 1 ELSE 0 END) AS partial,
+           SUM(CASE WHEN cleanup_status = 'failed' THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN cleanup_status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+           SUM(CASE WHEN cleanup_status = 'reconstructed' THEN 1 ELSE 0 END) AS reconstructed,
+           SUM(CASE WHEN raw_content IS NOT NULL THEN 1 ELSE 0 END) AS with_original,
+           SUM(CASE WHEN cleanup_fingerprint IS NULL OR cleanup_fingerprint != ? THEN 1 ELSE 0 END) AS needing,
+           MAX(cleanup_at) AS last_cleanup_at
+         FROM pages
+         WHERE version_id = ?`,
+      ),
+      getPageOriginalByUrl: this.db.prepare<[number, string]>(
+        `SELECT id, url, title, raw_content, cleanup_status, cleanup_at
+         FROM pages WHERE version_id = ? AND url = ?`,
       ),
       insertLibrary: this.db.prepare<[string]>(
         "INSERT INTO libraries (name) VALUES (?) ON CONFLICT(name) DO NOTHING",
@@ -1939,6 +1964,109 @@ export class DocumentStore {
       | { count: number }
       | undefined;
     return row?.count ?? 0;
+  }
+
+  /**
+   * Cleanup state of a version, for the library page.
+   *
+   * Returns zeroes rather than throwing for a version that does not exist: the
+   * page asks for this while the user is still choosing a version tab.
+   */
+  async getCleanupStats(
+    library: string,
+    version: string,
+    fingerprint: string,
+  ): Promise<CleanupStats> {
+    const empty: CleanupStats = {
+      totalPages: 0,
+      unprocessed: 0,
+      clean: 0,
+      partial: 0,
+      failed: 0,
+      skipped: 0,
+      reconstructed: 0,
+      withOriginal: 0,
+      needingCleanup: 0,
+      lastCleanupAt: null,
+    };
+
+    const versionRow = this.statements.getVersionId.get(
+      library.toLowerCase(),
+      version.toLowerCase(),
+    ) as { id: number } | undefined;
+    if (!versionRow) return empty;
+
+    const row = this.statements.getCleanupStats.get(fingerprint, versionRow.id) as
+      | {
+          total: number | null;
+          unprocessed: number | null;
+          clean: number | null;
+          partial: number | null;
+          failed: number | null;
+          skipped: number | null;
+          reconstructed: number | null;
+          with_original: number | null;
+          needing: number | null;
+          last_cleanup_at: string | null;
+        }
+      | undefined;
+    if (!row) return empty;
+
+    return {
+      totalPages: row.total ?? 0,
+      unprocessed: row.unprocessed ?? 0,
+      clean: row.clean ?? 0,
+      partial: row.partial ?? 0,
+      failed: row.failed ?? 0,
+      skipped: row.skipped ?? 0,
+      reconstructed: row.reconstructed ?? 0,
+      withOriginal: row.with_original ?? 0,
+      needingCleanup: row.needing ?? 0,
+      lastCleanupAt: row.last_cleanup_at ?? null,
+    };
+  }
+
+  /**
+   * One page's stored original beside the text now serving search.
+   *
+   * Keyed by URL rather than page id because the chunk explorer lists chunks,
+   * and a chunk carries the page's URL but not its id. Comparing whole pages is
+   * also the honest granularity: cleanup re-splits a page, so chunk boundaries
+   * move and a chunk-to-chunk diff would show edits that never happened.
+   */
+  async getPageOriginal(
+    library: string,
+    version: string,
+    url: string,
+  ): Promise<PageOriginal | null> {
+    const versionRow = this.statements.getVersionId.get(
+      library.toLowerCase(),
+      version.toLowerCase(),
+    ) as { id: number } | undefined;
+    if (!versionRow) return null;
+
+    const page = this.statements.getPageOriginalByUrl.get(versionRow.id, url) as
+      | {
+          id: number;
+          url: string;
+          title: string | null;
+          raw_content: string | null;
+          cleanup_status: string | null;
+          cleanup_at: string | null;
+        }
+      | undefined;
+    if (!page) return null;
+
+    const chunks = await this.getChunksByPageId(page.id);
+
+    return {
+      url: page.url,
+      title: page.title,
+      original: page.raw_content,
+      current: chunks.map((chunk) => chunk.content).join("\n\n"),
+      cleanupStatus: page.cleanup_status,
+      cleanupAt: page.cleanup_at,
+    };
   }
 
   /**

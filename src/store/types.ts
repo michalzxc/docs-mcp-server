@@ -420,6 +420,43 @@ export interface ActivityHistory {
   totalChunks: number;
 }
 
+/**
+ * Cleanup state of one version, for the library page.
+ *
+ * `needingCleanup` is only meaningful next to the prompt and model currently in
+ * force: changing either makes every page stale without rewriting a single row,
+ * which is why the caller supplies the fingerprint rather than the store
+ * assuming one.
+ */
+export interface CleanupStats {
+  totalPages: number;
+  /** Pages the cleanup pass has never considered. */
+  unprocessed: number;
+  clean: number;
+  partial: number;
+  failed: number;
+  skipped: number;
+  reconstructed: number;
+  /** Pages whose pre-cleanup Markdown is stored, so a re-run needs no re-scrape. */
+  withOriginal: number;
+  /** Pages never cleaned, or cleaned under a different prompt/model. */
+  needingCleanup: number;
+  /** Most recent cleanup timestamp, or null when the version was never cleaned. */
+  lastCleanupAt: string | null;
+}
+
+/** A page's stored pre-cleanup Markdown beside the text now serving search. */
+export interface PageOriginal {
+  url: string;
+  title: string | null;
+  /** Pre-cleanup Markdown, or null for a page indexed before cleanup existed. */
+  original: string | null;
+  /** The page's chunks as stored now, joined in document order. */
+  current: string;
+  cleanupStatus: string | null;
+  cleanupAt: string | null;
+}
+
 export interface VersionChunkStats {
   /** Number of distinct pages (unique URLs) indexed for this version. */
   pageCount: number;

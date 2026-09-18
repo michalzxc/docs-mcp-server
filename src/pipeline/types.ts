@@ -31,6 +31,35 @@ export enum PipelineJobKind {
   CLEANUP = "cleanup",
 }
 
+/** One slice the cleanup pass repaired, as shown live in the Jobs view. */
+export interface CleanupRepairSample {
+  /** Page the slice belongs to. */
+  url: string;
+  /** The slice as stored, truncated for transport. */
+  before: string;
+  /** The model's accepted answer, truncated the same way. */
+  after: string;
+}
+
+/**
+ * Live detail of a cleanup job, carried beside the scrape-shaped progress.
+ *
+ * Deliberately not part of `ScraperProgressEvent`: that type describes
+ * crawling, and every scrape consumer would otherwise carry fields that are
+ * never set for it. Samples are capped and truncated because this rides a
+ * progress event to every connected browser — streaming whole documents on
+ * each repaired slice would cost far more than the feature is worth.
+ */
+export interface CleanupJobProgress {
+  slicesRepaired: number;
+  slicesKept: number;
+  slicesRejected: number;
+  /** Most recent accepted repairs, newest first. */
+  recent: CleanupRepairSample[];
+  /** Why the most recent answers were refused, newest first. */
+  recentRejections: string[];
+}
+
 /**
  * Public interface for pipeline jobs exposed through API boundaries.
  * Contains only serializable fields suitable for JSON transport.
@@ -72,6 +101,8 @@ export interface PipelineJob {
   sourceUrl: string | null;
   /** Stored scraper options for reproducibility. */
   scraperOptions: ScraperOptions | null;
+  /** Live cleanup detail. Absent on scrape and refresh jobs. */
+  cleanupProgress?: CleanupJobProgress;
 }
 
 /**
