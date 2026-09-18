@@ -63,6 +63,25 @@ export function useGetScraperOptions(
   return trpc.getScraperOptions.useQuery(input, { enabled });
 }
 
+/**
+ * Cleanup state of one version. The fingerprint comes from `useSystemHealth`:
+ * "needs cleaning" is defined by the prompt and model currently in force.
+ */
+export function useCleanupStats(
+  input: RouterInputs["getCleanupStats"],
+  enabled: boolean,
+) {
+  return trpc.getCleanupStats.useQuery(input, { enabled });
+}
+
+/** A page's stored pre-cleanup Markdown beside the text now serving search. */
+export function usePageOriginal(
+  input: RouterInputs["getPageOriginal"],
+  enabled: boolean,
+) {
+  return trpc.getPageOriginal.useQuery(input, { enabled });
+}
+
 /** Lists stored chunks for a library version, paginated and optionally filtered by content. */
 export function useListVersionChunks(
   input: RouterInputs["listVersionChunks"],

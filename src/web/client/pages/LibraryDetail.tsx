@@ -20,6 +20,7 @@ import { LibIcon } from "../components/LibIcon";
 import { Loading } from "../components/Spinner";
 import { useToast } from "../components/Toast";
 import { ChunkExplorer } from "./library-detail/ChunkExplorer";
+import { CleanupPanel } from "./library-detail/CleanupPanel";
 import { ContentTypesPanel } from "./library-detail/ContentTypesPanel";
 import { displayUrl, formatCount } from "./library-detail/format";
 import { ScrapeConfigPanel } from "./library-detail/ScrapeConfigPanel";
@@ -172,6 +173,7 @@ export default function LibraryDetail() {
               version={activeVersionSummary}
               onRemoved={() => setActiveVersion(null)}
             />
+            <CleanupPanel library={libraryName} version={activeVersion ?? ""} />
             <ContentTypesPanel library={libraryName} version={activeVersion ?? ""} />
           </div>
         ) : (

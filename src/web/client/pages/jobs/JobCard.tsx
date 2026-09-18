@@ -4,7 +4,7 @@
  * `LibIcon`, `Chip`, `ProgressBar`, and `Icon` from the shared component
  * library — see `components/README.md`.
  */
-import { PipelineJobStatus } from "../../../../pipeline/types";
+import { PipelineJobKind, PipelineJobStatus } from "../../../../pipeline/types";
 import { Button } from "../../components/Button";
 import { Chip } from "../../components/Chip";
 import { Icon } from "../../components/Icon";
@@ -24,9 +24,75 @@ export interface JobCardProps {
   cancelPending?: boolean;
 }
 
+/**
+ * Live detail of a cleanup job: what it has repaired, and what it just changed.
+ *
+ * Shown because a cleanup pass was previously silent between page completions —
+ * a page with dozens of slices reported nothing for minutes, so a slow job and
+ * a hung one were indistinguishable, and every rejection went only to the log.
+ */
+function CleanupDetail({ job }: { job: Job }) {
+  const live = job.cleanupProgress;
+  if (!live) return null;
+
+  return (
+    <>
+      <div className="jobc__stats">
+        <span>
+          <b>{live.slicesRepaired.toLocaleString()}</b> repaired
+        </span>
+        <span>
+          <b>{live.slicesKept.toLocaleString()}</b> kept
+        </span>
+        <span>
+          <b>{live.slicesRejected.toLocaleString()}</b> rejected
+        </span>
+      </div>
+
+      {live.recent.length > 0 || live.recentRejections.length > 0 ? (
+        <details className="adv">
+          <summary>Recent changes</summary>
+          {live.recent.map((sample) => (
+            <div key={`${sample.url}-${sample.before}`} style={{ marginBottom: 8 }}>
+              <div className="muted" style={{ fontSize: 11 }}>
+                {sample.url}
+              </div>
+              <pre
+                className="mono"
+                style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 11 }}
+              >
+                − {sample.before}
+                {"\n"}+ {sample.after}
+              </pre>
+            </div>
+          ))}
+          {live.recentRejections.length > 0 ? (
+            <div className="muted" style={{ fontSize: 11 }}>
+              refused: {live.recentRejections.join(" · ")}
+            </div>
+          ) : null}
+        </details>
+      ) : null}
+    </>
+  );
+}
+
 /** Renders the mockup's per-status meta line (URL for running, or the collapse note for cancelling). */
 function StatsLine({ job }: { job: Job }) {
   const { pages, maxPages } = jobPageCounts(job);
+
+  // A cleanup job fetches nothing, so "discovered" and "depth" would be zeroes
+  // dressed up as information.
+  if (job.kind === PipelineJobKind.CLEANUP) {
+    return (
+      <div className="jobc__stats">
+        <span>
+          <b>{pages.toLocaleString()}</b> / {maxPages.toLocaleString()} pages
+        </span>
+        <span>repairs stored Markdown — no site is fetched</span>
+      </div>
+    );
+  }
 
   if (job.status === PipelineJobStatus.CANCELLING) {
     return (
@@ -109,6 +175,7 @@ export function JobCard({
         <LibIcon name={job.library} url={job.sourceUrl} />
         <span className="jobc__title">{job.library}</span>
         <Chip>{job.version || "unversioned"}</Chip>
+        {job.kind && job.kind !== PipelineJobKind.SCRAPE ? <Chip>{job.kind}</Chip> : null}
         <div className="jobc__right">
           {isRunning ? (
             <span className="jobc__elapsed">
@@ -144,6 +211,7 @@ export function JobCard({
       ) : null}
 
       <StatsLine job={job} />
+      <CleanupDetail job={job} />
     </div>
   );
 }
