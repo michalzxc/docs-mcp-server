@@ -8,6 +8,37 @@ describe("SemanticMarkdownSplitter", () => {
     expect(result).toEqual([]);
   });
 
+  it("should leave an underscore inside a word unescaped", async () => {
+    // The splitter round-trips markdown through HTML, and Turndown escapes
+    // punctuation on the way back, so identifiers arrived as `source\_pod`.
+    // An underscore inside a word cannot open emphasis in CommonMark, so that
+    // backslash changed nothing about rendering while making the chunk harder
+    // to read and to match — it accounted for 69% of the escapes in a real
+    // index built with this project.
+    const splitter = new SemanticMarkdownSplitter(100, 5000);
+    const result = await splitter.splitText("Labels: source_pod and PULUMI_STACK.");
+
+    expect(result[0].content).toContain("source_pod");
+    expect(result[0].content).toContain("PULUMI_STACK");
+    expect(result[0].content).not.toContain("\\_");
+  });
+
+  it("should keep an escape that stops a line being re-parsed as a list", async () => {
+    // The counterpart to the rule above: here the backslash is load-bearing,
+    // because without it the line comes back as a bullet rather than text.
+    const splitter = new SemanticMarkdownSplitter(100, 5000);
+    const result = await splitter.splitText("\\* not a bullet");
+
+    expect(result[0].content).toContain("\\*");
+  });
+
+  it("should still emphasise a genuinely emphasised word", async () => {
+    const splitter = new SemanticMarkdownSplitter(100, 5000);
+    const result = await splitter.splitText("_really_ emphasised");
+
+    expect(result[0].content).toContain("_really_");
+  });
+
   it("should handle markdown with no headings", async () => {
     const splitter = new SemanticMarkdownSplitter(100, 5000);
     const markdown = "This is some text without any headings.";

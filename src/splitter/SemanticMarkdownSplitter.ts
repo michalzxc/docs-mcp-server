@@ -57,6 +57,22 @@ export class SemanticMarkdownSplitter implements DocumentSplitter {
       linkStyle: "inlined",
     });
 
+    // This splitter round-trips markdown through HTML, and the return leg is
+    // Turndown, which escapes markdown punctuation in text. So `source_pod`
+    // comes back as `source\_pod` on the way into every chunk — 69% of all the
+    // backslash escapes in a real index of this project, none of them doing any
+    // work: an underscore inside a word cannot open emphasis in CommonMark, so
+    // the escape changes nothing about how the text renders and only makes the
+    // chunk harder to read and to match. Escapes that begin a line are left
+    // alone, because there they are load-bearing: without them `* not a bullet`
+    // is re-parsed as a list.
+    const service = this.turndownService as unknown as {
+      escape: (text: string) => string;
+    };
+    const escapeMarkdown = service.escape.bind(this.turndownService);
+    service.escape = (text: string): string =>
+      escapeMarkdown(text).replace(/(?<=[A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, "_");
+
     // Add table rule to preserve markdown table format
     this.turndownService.addRule("table", {
       filter: ["table"],
