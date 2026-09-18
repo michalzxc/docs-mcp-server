@@ -51,6 +51,8 @@ export interface SystemHealth {
   mcp: SystemInfo["mcp"];
   auth: SystemInfo["auth"];
   scraper: SystemInfo["scraper"];
+  cleanup: SystemInfo["cleanup"];
+  automation: SystemInfo["automation"];
 }
 
 /**
@@ -95,6 +97,8 @@ export function createSystemHealthRouter(trpc: unknown) {
           mcp: systemInfo.mcp,
           auth: systemInfo.auth,
           scraper: systemInfo.scraper,
+          cleanup: systemInfo.cleanup,
+          automation: systemInfo.automation,
         };
       },
     ),

@@ -61,6 +61,36 @@ describe("buildSystemInfo", () => {
     });
   });
 
+  it("reports the built-in cleanup prompt as not overridden", () => {
+    // The dashboard shows this verbatim: an operator has no other way to tell
+    // which instruction the model is running under.
+    const info = buildSystemInfo(baseServerConfig(), appConfig);
+
+    expect(info.cleanup.systemPrompt.length).toBeGreaterThan(0);
+    expect(info.cleanup.promptOverridden).toBe(false);
+  });
+
+  it("reports a configured cleanup prompt as overridden", () => {
+    const customConfig: AppConfig = JSON.parse(JSON.stringify(appConfig));
+    customConfig.cleanup.systemPrompt = "Repair the Markdown and nothing else.";
+
+    const info = buildSystemInfo(baseServerConfig(), customConfig);
+
+    expect(info.cleanup.systemPrompt).toBe("Repair the Markdown and nothing else.");
+    expect(info.cleanup.promptOverridden).toBe(true);
+  });
+
+  it("reports the maintenance window so the dashboard can show when work runs", () => {
+    const customConfig: AppConfig = JSON.parse(JSON.stringify(appConfig));
+    customConfig.automation.windowStart = "02:30";
+    customConfig.automation.windowEnd = "04:00";
+
+    const info = buildSystemInfo(baseServerConfig(), customConfig);
+
+    expect(info.automation.windowStart).toBe("02:30");
+    expect(info.automation.windowEnd).toBe("04:00");
+  });
+
   it("reports scraper limits for clients that use the configured defaults", () => {
     const customConfig: AppConfig = JSON.parse(JSON.stringify(appConfig));
     customConfig.scraper.maxPages = 250;

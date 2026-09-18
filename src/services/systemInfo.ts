@@ -10,6 +10,7 @@
  * separately; see {@link ./appRouter}.
  */
 import type { AppServerConfig } from "../app/AppServerConfig";
+import { DEFAULT_CLEANUP_SYSTEM_PROMPT } from "../cleanup/prompt";
 import type { AppConfig } from "../utils/config";
 
 /** Which top-level services this process was started with. */
@@ -49,6 +50,41 @@ export interface SystemInfoScraper {
 }
 
 /**
+ * LLM Markdown cleanup, as the running process resolved it.
+ *
+ * The prompt is reported in full rather than as a flag, because it is the
+ * setting that decides what the model may change: reading the dashboard is
+ * otherwise no way to tell whether the built-in default or an override is in
+ * force. No credential appears here — the API key is read from the environment
+ * and never enters `AppConfig`.
+ */
+export interface SystemInfoCleanup {
+  enabled: boolean;
+  model: string;
+  /** OpenAI-compatible endpoint the cleanup model is called on. */
+  baseUrl: string;
+  sliceChars: number;
+  maxConcurrency: number;
+  requestDelayMs: number;
+  /** `dirty` repairs only pages carrying artefacts; `all` repairs every page. */
+  filter: string;
+  /** The prompt actually in force, default or overridden. */
+  systemPrompt: string;
+  /** False when `systemPrompt` is the built-in default. */
+  promptOverridden: boolean;
+}
+
+/** The maintenance window, and what it is allowed to queue inside it. */
+export interface SystemInfoAutomation {
+  enabled: boolean;
+  windowStart: string;
+  windowEnd: string;
+  cleanupEnabled: boolean;
+  refreshEnabled: boolean;
+  refreshMinIntervalHours: number;
+}
+
+/**
  * Distilled, serializable snapshot of the server's startup configuration.
  * Safe to assemble a single time at service-registration and share across
  * every tRPC request (HTTP and WebSocket alike).
@@ -62,6 +98,8 @@ export interface SystemInfo {
   mcp: SystemInfoMcp;
   auth: SystemInfoAuth;
   scraper: SystemInfoScraper;
+  cleanup: SystemInfoCleanup;
+  automation: SystemInfoAutomation;
 }
 
 /**
@@ -102,6 +140,27 @@ export function buildSystemInfo(
     scraper: {
       maxPages: appConfig.scraper.maxPages,
       maxDepth: appConfig.scraper.maxDepth,
+    },
+    cleanup: {
+      enabled: Boolean(appConfig.cleanup.enabled),
+      model: appConfig.cleanup.model,
+      baseUrl: appConfig.cleanup.baseUrl,
+      sliceChars: appConfig.cleanup.sliceChars,
+      maxConcurrency: appConfig.cleanup.maxConcurrency,
+      requestDelayMs: appConfig.cleanup.requestDelayMs,
+      filter: appConfig.cleanup.filter,
+      // Resolved the same way the service resolves it, so the dashboard shows
+      // the instruction actually in force rather than what is configured.
+      systemPrompt: appConfig.cleanup.systemPrompt || DEFAULT_CLEANUP_SYSTEM_PROMPT,
+      promptOverridden: Boolean(appConfig.cleanup.systemPrompt),
+    },
+    automation: {
+      enabled: Boolean(appConfig.automation.enabled),
+      windowStart: appConfig.automation.windowStart,
+      windowEnd: appConfig.automation.windowEnd,
+      cleanupEnabled: Boolean(appConfig.automation.cleanupEnabled),
+      refreshEnabled: Boolean(appConfig.automation.refreshEnabled),
+      refreshMinIntervalHours: appConfig.automation.refreshMinIntervalHours,
     },
   };
 }

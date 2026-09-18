@@ -14,6 +14,25 @@ function baseSystemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
     mcp: { enabled: true, endpoints: ["/mcp", "/sse"] },
     auth: { enabled: false },
     scraper: { maxPages: 1000, maxDepth: 3 },
+    cleanup: {
+      enabled: false,
+      model: "",
+      baseUrl: "",
+      sliceChars: 5000,
+      maxConcurrency: 2,
+      requestDelayMs: 0,
+      filter: "dirty",
+      systemPrompt: "built-in prompt",
+      promptOverridden: false,
+    },
+    automation: {
+      enabled: false,
+      windowStart: "01:00",
+      windowEnd: "05:00",
+      cleanupEnabled: false,
+      refreshEnabled: false,
+      refreshMinIntervalHours: 168,
+    },
     ...overrides,
   };
 }

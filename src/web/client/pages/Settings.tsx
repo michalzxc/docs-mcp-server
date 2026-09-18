@@ -169,6 +169,103 @@ export default function Settings() {
     },
   ];
 
+  const cleanupRows: SettingRow[] = [
+    {
+      key: "cleanup",
+      label: "Markdown cleanup",
+      caption: "Repairs conversion artefacts in indexed pages with an LLM",
+      value: (
+        <>
+          <Pill variant={health.cleanup.enabled ? "ok" : "idle"}>
+            {health.cleanup.enabled ? "enabled" : "disabled"}
+          </Pill>
+          <ConfigNote />
+        </>
+      ),
+    },
+    {
+      key: "cleanup-model",
+      label: "Model",
+      caption: "Endpoint and model used to repair pages",
+      value: health.cleanup.model ? (
+        <>
+          <Chip>{health.cleanup.model}</Chip>
+          {health.cleanup.baseUrl ? <Chip>{health.cleanup.baseUrl}</Chip> : null}
+        </>
+      ) : (
+        <Pill variant="idle">not configured</Pill>
+      ),
+    },
+    {
+      key: "cleanup-limits",
+      label: "Limits",
+      caption: "Slice size, parallel requests, and the gap between them",
+      value: (
+        <>
+          <Chip>{health.cleanup.sliceChars} chars</Chip>
+          <Chip>{health.cleanup.maxConcurrency} parallel</Chip>
+          <Chip>{health.cleanup.requestDelayMs} ms apart</Chip>
+          <Chip>
+            {health.cleanup.filter === "all" ? "every page" : "pages with artefacts"}
+          </Chip>
+        </>
+      ),
+    },
+    {
+      key: "cleanup-prompt",
+      // Shown in full, not summarised: this is the instruction deciding what
+      // the model may rewrite, and a wrong one is invisible everywhere else.
+      label: "System prompt",
+      caption: "The instruction the model runs under right now",
+      value: (
+        <>
+          <Pill variant="idle">
+            {health.cleanup.promptOverridden ? "custom" : "built-in default"}
+          </Pill>
+          <Chip>{health.cleanup.systemPrompt.length} chars</Chip>
+          <ConfigNote />
+          <details className="adv">
+            <summary>View prompt</summary>
+            <pre className="mono" style={{ whiteSpace: "pre-wrap" }}>
+              {health.cleanup.systemPrompt}
+            </pre>
+          </details>
+        </>
+      ),
+    },
+  ];
+
+  const automationRows: SettingRow[] = [
+    {
+      key: "automation",
+      label: "Maintenance window",
+      caption: "When background cleanup and refresh may run",
+      value: (
+        <>
+          <Pill variant={health.automation.enabled ? "ok" : "idle"}>
+            {health.automation.enabled ? "enabled" : "disabled"}
+          </Pill>
+          <Chip>
+            {health.automation.windowStart}–{health.automation.windowEnd}
+          </Chip>
+          <ConfigNote />
+        </>
+      ),
+    },
+    {
+      key: "automation-work",
+      label: "Queues",
+      caption: "Work the window is allowed to start",
+      value: (
+        <>
+          <Chip>{health.automation.cleanupEnabled ? "cleanup" : "no cleanup"}</Chip>
+          <Chip>{health.automation.refreshEnabled ? "refresh" : "no refresh"}</Chip>
+          <Chip>re-index after {health.automation.refreshMinIntervalHours} h</Chip>
+        </>
+      ),
+    },
+  ];
+
   const authRows: SettingRow[] = [
     {
       key: "oauth",
@@ -203,6 +300,8 @@ export default function Settings() {
 
       <SettingsGroup title="Embeddings" rows={embeddingsRows} />
       <SettingsGroup title="Server" rows={serverRows} />
+      <SettingsGroup title="Documentation cleanup" rows={cleanupRows} />
+      <SettingsGroup title="Maintenance" rows={automationRows} />
       <SettingsGroup title="Authentication" rows={authRows} />
     </div>
   );
