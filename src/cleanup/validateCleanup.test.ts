@@ -75,6 +75,27 @@ describe("validateCleanup", () => {
     expect(result.ok === false && result.reason).toBe("code blocks dropped");
   });
 
+  it("rejects an answer that escapes identifiers which were already plain", () => {
+    // Observed on the live index: the model rewrote `source_pod` as
+    // `source\_pod` on 24 identifiers in one page. Nothing else caught it,
+    // because prose escapes are not compared and inline spans are compared
+    // with escapes stripped.
+    const original = "Labels: source_pod, destination_app, source_workload_kind.";
+    const cleaned = "Labels: source\\_pod, destination\\_app, source\\_workload\\_kind.";
+
+    const result = validateCleanup(original, cleaned, options);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe("escapes added");
+  });
+
+  it("still accepts an answer that removes escapes", () => {
+    const original = "Labels: source\\_pod and destination\\_app.";
+    const cleaned = "Labels: source_pod and destination_app.";
+
+    expect(validateCleanup(original, cleaned, options)).toEqual({ ok: true });
+  });
+
   it("rejects unescaping inside a fenced block, because escapes there are real", () => {
     // Counted over the live index: 35 of the 40 escapes inside fenced blocks are
     // `\.` inside regular expressions, where the backslash is load-bearing —

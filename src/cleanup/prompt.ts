@@ -22,6 +22,7 @@ Rules you must not break:
 - Never change the meaning, wording, or order of prose. Do not summarise, expand, rephrase, translate, correct spelling, or add commentary of your own.
 - Never change anything inside a code block or an inline code span: not one character of code, not indentation, not comments, not example values, not placeholder names.
 - Never change punctuation or Unicode characters. Curly quotes, dashes and non-ASCII characters stay exactly as they are.
+- Never add a backslash escape. If a character is not escaped in the fragment you receive, it must not be escaped in your answer: an identifier written source_pod stays source_pod.
 - Never add or remove headings, list items, table rows, or links, and keep every link target byte-for-byte identical.
 - Never add a preamble, an explanation, or a closing remark.
 - Do not wrap your answer in a code fence. Output the Markdown directly, starting with its first line of content.

@@ -91,6 +91,17 @@ export function validateCleanup(
     return { ok: false, reason: "fence balance changed" };
   }
 
+  // Removing needless escapes is the point of the pass, so an answer carrying
+  // more of them than its input is moving backwards. Measured in production
+  // before this gate existed: on one page the model escaped 24 identifiers that
+  // were already plain (`source_pod` became `source\_pod`), and every other gate
+  // accepted it — inline spans and link targets are compared with escapes
+  // stripped, and prose escapes were not checked at all.
+  const escapeCount = (text: string): number => (text.match(/\\[_*\-.+#]/g) ?? []).length;
+  if (escapeCount(cleaned) > escapeCount(original)) {
+    return { ok: false, reason: "escapes added" };
+  }
+
   // Code is guarded by provenance, not by shape: every fenced block in the
   // answer must already appear in the slice it came from. Demanding an
   // identical set of blocks looked stricter but was wrong — scraped pages
