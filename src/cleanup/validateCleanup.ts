@@ -26,7 +26,7 @@ function fencedCode(markdown: string): string[] {
     blocks.push(normaliseCode(match[1] ?? ""));
     match = pattern.exec(markdown);
   }
-  return blocks.sort();
+  return blocks;
 }
 
 /** Inline spans, which carry flags, paths and identifiers worth protecting. */
@@ -56,17 +56,22 @@ function normaliseCode(code: string): string {
     .trim();
 }
 
-function sameMultiset(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+/** Whitespace-insensitive form, so re-indentation is not read as an edit. */
+function flatten(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
-/**
- * Checks a cleaned slice against the original it replaces.
- *
- * Escaped identifiers are unescaped by design, so inline spans and link targets
- * are compared after removing the backslashes the conversion added — otherwise
- * every genuine repair would read as a violation.
- */
+/** Characters of actual code, ignoring layout. */
+function codeVolume(blocks: string[]): number {
+  return blocks.reduce((total, block) => total + block.replace(/\s+/g, "").length, 0);
+}
+
+function sameMultiset(a: string[], b: string[]): boolean {
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.length === y.length && x.every((value, index) => value === y[index]);
+}
+
 export function validateCleanup(
   original: string,
   cleaned: string,
@@ -86,10 +91,37 @@ export function validateCleanup(
     return { ok: false, reason: "fence balance changed" };
   }
 
-  if (!sameMultiset(fencedCode(original), fencedCode(cleaned))) {
-    return { ok: false, reason: "code blocks altered" };
+  // Code is guarded by provenance, not by shape: every fenced block in the
+  // answer must already appear in the slice it came from. Demanding an
+  // identical set of blocks looked stricter but was wrong — scraped pages
+  // arrive with doubled fence markers (one page here parsed as 15 blocks, 13 of
+  // them empty, with the real code stranded outside as prose), and the prompt
+  // asks the model to repair exactly that. Containment still refuses invented
+  // or edited code, including unescaping inside a fence: of the 40 escapes
+  // inside fenced blocks in this index, 35 are `\.` in real regular
+  // expressions, where `/\.tsx?$/` and `/.tsx?$/` match different things.
+  const originalBlocks = fencedCode(original);
+  const cleanedBlocks = fencedCode(cleaned);
+  const haystack = flatten(original);
+
+  for (const block of cleanedBlocks) {
+    const needle = flatten(block);
+    if (needle.length === 0) continue;
+    if (!haystack.includes(needle)) {
+      return { ok: false, reason: "code blocks altered" };
+    }
   }
 
+  // Containment alone would accept an answer that simply deleted every fence,
+  // which loses no text but destroys the code/prose distinction that search
+  // depends on. Growth is allowed: re-fencing stranded code is the repair.
+  if (codeVolume(cleanedBlocks) * 2 < codeVolume(originalBlocks)) {
+    return { ok: false, reason: "code blocks dropped" };
+  }
+
+  // Inline spans and link targets are compared after removing the escapes the
+  // HTML conversion added, because removing them is the repair: `PULUMI\_STACK`
+  // becoming `PULUMI_STACK` must read as unchanged.
   const stripEscapes = (values: string[]): string[] =>
     values.map((value) => value.replace(/\\([_*\-.+#])/g, "$1")).sort();
 

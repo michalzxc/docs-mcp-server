@@ -53,6 +53,42 @@ describe("validateCleanup", () => {
     expect(validateCleanup(original, cleaned, options)).toEqual({ ok: true });
   });
 
+  it("accepts re-fencing code the scrape left stranded outside a block", () => {
+    // A real page in the index: doubled fence markers parsed as 15 blocks, 13
+    // of them empty, with the code sitting outside as prose. Repairing that is
+    // what the prompt asks for, so the gate must not demand identical blocks.
+    const original = '```python\n```\n\nimport pulumi\nvpc = Vpc("vpc")\n\n```\n```\n';
+    const cleaned = '```python\nimport pulumi\nvpc = Vpc("vpc")\n```\n';
+
+    expect(validateCleanup(original, cleaned, options)).toEqual({ ok: true });
+  });
+
+  it("rejects an answer that unfenced the code entirely", () => {
+    // Containment alone would allow this: no text is lost, but the code/prose
+    // distinction search depends on is gone.
+    const original = "```bash\nkubectl get pods\nkubectl get nodes\n```\n";
+    const cleaned = "kubectl get pods\nkubectl get nodes\n";
+
+    const result = validateCleanup(original, cleaned, options);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe("code blocks dropped");
+  });
+
+  it("rejects unescaping inside a fenced block, because escapes there are real", () => {
+    // Counted over the live index: 35 of the 40 escapes inside fenced blocks are
+    // `\.` inside regular expressions, where the backslash is load-bearing —
+    // `/\.tsx?$/` and `/.tsx?$/` match different things. Unescaping is a repair
+    // outside fences and a corruption inside one, so code keeps the strict rule.
+    const original = "```js\nconst re = /\\.tsx?$/;\n```\n";
+    const cleaned = "```js\nconst re = /.tsx?$/;\n```\n";
+
+    const result = validateCleanup(original, cleaned, options);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe("code blocks altered");
+  });
+
   it("rejects a dropped inline code span", () => {
     const original = "Set `--max-pages` and `--scope` before running.";
     const cleaned = "Set `--max-pages` before running.";
