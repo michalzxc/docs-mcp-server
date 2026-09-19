@@ -87,8 +87,14 @@ export interface CleanupSliceEvent {
   rejected?: string;
 }
 
-/** Context kept either side of the change, so it reads in situ. */
-const CONTEXT_CHARS = 70;
+/**
+ * Context kept either side of the change, so it reads in situ.
+ *
+ * Deliberately short. At seventy the unchanged text was most of the line and
+ * the panel read as a blob of monospace; the summary already says what changed,
+ * so this only has to show where.
+ */
+const CONTEXT_CHARS = 24;
 
 /**
  * Ceiling on the changed span itself.
@@ -102,13 +108,25 @@ const CONTEXT_CHARS = 70;
  */
 const MAX_SPAN_CHARS = 160;
 
+/** How much identical text proves the two strings have lined up again. */
+const RESYNC_ANCHOR_CHARS = 24;
+
 /**
  * The part of the slice that actually changed, plus a little context.
  *
- * Sending the head of the slice instead was useless in practice: a repair that
- * removed one character three paragraphs down produced two identical-looking
- * walls of text, and the reader had no way to see what had happened. Trimming
- * the common prefix and suffix also makes the payload a fraction of the size.
+ * Three failures shaped this, each found by looking at the live payload rather
+ * than at a test. Sending the head of the slice showed two identical walls of
+ * text when the repair was further down. Spanning from the first difference to
+ * the last then returned nearly the whole slice. Clamping that span marked 229
+ * characters for a one-character repair, because removing a character shifts
+ * everything after it and cutting both sides at the same offset lands on
+ * different text — leaving no common tail for the reader, or the UI, to anchor
+ * on.
+ *
+ * So this walks forward from the first difference until a short run of text
+ * reappears on the other side, which is where the two have lined up again, and
+ * cuts both windows there. The tails then match and only the real change
+ * differs. Changes beyond that point are reported by the summary instead.
  */
 export function changedRegion(
   before: string,
@@ -123,32 +141,41 @@ export function changedRegion(
     start++;
   }
 
-  let endBefore = before.length;
-  let endAfter = after.length;
-  while (
-    endBefore > start &&
-    endAfter > start &&
-    before[endBefore - 1] === after[endAfter - 1]
-  ) {
-    endBefore--;
-    endAfter--;
+  if (start === before.length && start === after.length) {
+    return { before, after };
   }
 
-  // Show the first change with bounded context rather than everything between
-  // the first and the last.
-  const spanBefore = Math.min(endBefore, start + MAX_SPAN_CHARS);
-  const spanAfter = Math.min(endAfter, start + MAX_SPAN_CHARS);
+  // Without a resync point, fall back to a bounded span: better a blunt window
+  // than one that runs to the end of the slice.
+  let endBefore = Math.min(before.length, start + MAX_SPAN_CHARS);
+  let endAfter = Math.min(after.length, start + MAX_SPAN_CHARS);
+
+  for (
+    let k = 0;
+    k <= MAX_SPAN_CHARS && start + k + RESYNC_ANCHOR_CHARS <= before.length;
+    k++
+  ) {
+    const anchor = before.slice(start + k, start + k + RESYNC_ANCHOR_CHARS);
+    const found = after.indexOf(anchor, start);
+    if (found !== -1) {
+      endBefore = start + k;
+      endAfter = found;
+      break;
+    }
+  }
 
   const from = Math.max(0, start - CONTEXT_CHARS);
-  const toBefore = Math.min(before.length, spanBefore + CONTEXT_CHARS);
-  const toAfter = Math.min(after.length, spanAfter + CONTEXT_CHARS);
+  const toBefore = Math.min(before.length, endBefore + CONTEXT_CHARS);
+  const toAfter = Math.min(after.length, endAfter + CONTEXT_CHARS);
   const lead = from > 0 ? "…" : "";
+  // All or nothing: an ellipsis on one side only would itself break the tail.
+  const trail = toBefore < before.length || toAfter < after.length ? "…" : "";
 
   const tidy = (text: string) => text.replace(/\s+/g, " ");
 
   return {
-    before: `${lead}${tidy(before.slice(from, toBefore))}${toBefore < before.length ? "…" : ""}`,
-    after: `${lead}${tidy(after.slice(from, toAfter))}${toAfter < after.length ? "…" : ""}`,
+    before: `${lead}${tidy(before.slice(from, toBefore))}${trail}`,
+    after: `${lead}${tidy(after.slice(from, toAfter))}${trail}`,
   };
 }
 

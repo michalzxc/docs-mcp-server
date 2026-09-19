@@ -59,18 +59,32 @@ const MARK_STYLE = {
   background: "var(--mark, rgba(255, 196, 0, 0.32))",
   borderRadius: 2,
   padding: "0 1px",
+  fontWeight: 600,
+  color: "var(--text)",
 };
 
-/** One side of a repair, with the differing span marked. */
+/**
+ * One side of a repair.
+ *
+ * The surrounding context is dimmed and only the differing span is lit. At
+ * equal weight the unchanged text is most of the line, the eye has nowhere to
+ * land, and the panel reads as a blob of monospace however short the excerpt.
+ */
 function DiffLine({ sign, text, other }: { sign: string; text: string; other: string }) {
   const { head, changed, tail } = splitDiff(text, other);
 
   return (
     <div
       className="mono"
-      style={{ fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+      style={{
+        fontSize: 11,
+        lineHeight: 1.55,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        color: "var(--text-faint)",
+      }}
     >
-      <span className="muted">{sign} </span>
+      <span style={{ opacity: 0.6 }}>{sign} </span>
       {head}
       {changed ? <span style={MARK_STYLE}>{changed}</span> : null}
       {tail}
@@ -111,10 +125,19 @@ function CleanupDetail({ job }: { job: Job }) {
         <details className="adv">
           <summary>Recent changes</summary>
           {live.recent.map((sample) => (
-            <div key={`${sample.url}-${sample.before}`} style={{ marginBottom: 10 }}>
-              <div className="muted" style={{ fontSize: 11 }}>
-                {displayUrl(sample.url)}
-                {sample.summary ? ` · ${sample.summary}` : ""}
+            <div
+              key={`${sample.url}-${sample.before}`}
+              style={{
+                marginBottom: 12,
+                paddingLeft: 10,
+                borderLeft: "2px solid var(--border)",
+              }}
+            >
+              <div style={{ fontSize: 11, marginBottom: 3 }}>
+                <span className="muted">{displayUrl(sample.url)}</span>
+                {sample.summary ? (
+                  <span style={{ marginLeft: 6, fontWeight: 600 }}>{sample.summary}</span>
+                ) : null}
               </div>
               <DiffLine sign="−" text={sample.before} other={sample.after} />
               <DiffLine sign="+" text={sample.after} other={sample.before} />

@@ -118,6 +118,40 @@ describe("changedRegion", () => {
     expect(region.before).toContain("Limiter¶");
   });
 
+  it("marks only the change when later edits shift the text", () => {
+    // The live failure this reproduces: a one-character repair was highlighted
+    // across 229 characters. Removing a character shifts everything after it,
+    // and with further edits beyond the span cap both windows were cut at the
+    // same offset — which is different text on each side, so nothing lined up.
+    //
+    // The earlier tests passed against that broken code, because a single
+    // isolated change needs no resynchronisation. This one needs it.
+    const long = "collaborative software platforms and other prose. ".repeat(6);
+    const before = `${"x".repeat(80)}# Engines¶${long} a\\_b trailing text`;
+    const after = `${"x".repeat(80)}# Engines${long} a_b trailing text`;
+
+    const region = changedRegion(before, after);
+
+    // Exactly what the job card does to decide what to highlight.
+    let p = 0;
+    while (
+      p < region.before.length &&
+      p < region.after.length &&
+      region.before[p] === region.after[p]
+    ) {
+      p++;
+    }
+    let endB = region.before.length;
+    let endA = region.after.length;
+    while (endB > p && endA > p && region.before[endB - 1] === region.after[endA - 1]) {
+      endB--;
+      endA--;
+    }
+
+    expect(endB - p).toBeLessThan(5);
+    expect(region.before.slice(p, endB)).toContain("¶");
+  });
+
   it("keeps the whole text when it is shorter than the context window", () => {
     const region = changedRegion("PULUMI\\_STACK", "PULUMI_STACK");
 
