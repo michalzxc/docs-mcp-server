@@ -73,17 +73,6 @@ const MARK_STYLE = {
 function DiffLine({ sign, text, other }: { sign: string; text: string; other: string }) {
   const { head, changed, tail } = splitDiff(text, other);
 
-  // Whitespace is collapsed for display, so a repair that only moved layout can
-  // leave the two sides identical as rendered. Two matching lines and a marker
-  // pointing at nothing reads as a bug; the summary already carries the fact.
-  if (text === other) {
-    return (
-      <div className="muted" style={{ fontSize: 11, lineHeight: 1.55 }}>
-        (layout only — nothing visible to show)
-      </div>
-    );
-  }
-
   return (
     <div
       className="mono"
@@ -110,6 +99,24 @@ function DiffLine({ sign, text, other }: { sign: string; text: string; other: st
       {tail}
     </div>
   );
+}
+
+/**
+ * Collapses repeated refusals into counts.
+ *
+ * The same gate refuses many slices in a row on a link-heavy library, and the
+ * raw list read as noise: "link targets altered · length changed by 36% · link
+ * targets altered · link targets altered".
+ */
+function summariseReasons(reasons: string[]): string {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+
+  return [...counts]
+    .map(([reason, count]) => (count > 1 ? `${reason} ×${count}` : reason))
+    .join(" · ");
 }
 
 /**
@@ -159,13 +166,23 @@ function CleanupDetail({ job }: { job: Job }) {
                   <span style={{ marginLeft: 6, fontWeight: 600 }}>{sample.summary}</span>
                 ) : null}
               </div>
-              <DiffLine sign="−" text={sample.before} other={sample.after} />
-              <DiffLine sign="+" text={sample.after} other={sample.before} />
+              {sample.before === sample.after ? (
+                // Once, not once per side: whitespace is collapsed for display,
+                // so both lines would be identical and the note appeared twice.
+                <div className="muted" style={{ fontSize: 11, lineHeight: 1.55 }}>
+                  spacing only — no visible difference to show
+                </div>
+              ) : (
+                <>
+                  <DiffLine sign="−" text={sample.before} other={sample.after} />
+                  <DiffLine sign="+" text={sample.after} other={sample.before} />
+                </>
+              )}
             </div>
           ))}
           {live.recentRejections.length > 0 ? (
             <div className="muted" style={{ fontSize: 11 }}>
-              refused: {live.recentRejections.join(" · ")}
+              refused: {summariseReasons(live.recentRejections)}
             </div>
           ) : null}
         </details>

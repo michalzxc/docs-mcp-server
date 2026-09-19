@@ -173,10 +173,19 @@ export function changedRegion(
 
   const tidy = (text: string) => text.replace(/\s+/g, " ");
 
-  return {
-    before: `${lead}${tidy(before.slice(from, toBefore))}${trail}`,
-    after: `${lead}${tidy(after.slice(from, toAfter))}${trail}`,
-  };
+  const shownBefore = `${lead}${tidy(before.slice(from, toBefore))}${trail}`;
+  const shownAfter = `${lead}${tidy(after.slice(from, toAfter))}${trail}`;
+
+  // A whitespace-only repair leaves both sides identical once collapsed, and no
+  // resync anchor distinguishes them, so the fallback span returned thousands
+  // of characters that render as one long line printed twice. There is nothing
+  // to show, so show a little of it and let the summary carry the change.
+  if (shownBefore === shownAfter && shownBefore.length > 2 * CONTEXT_CHARS) {
+    const clipped = shownBefore.slice(0, 2 * CONTEXT_CHARS);
+    return { before: `${clipped}…`, after: `${clipped}…` };
+  }
+
+  return { before: shownBefore, after: shownAfter };
 }
 
 const ESCAPE_PATTERN = /\\[_*\-.+#]/g;
