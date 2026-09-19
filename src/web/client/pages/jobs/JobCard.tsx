@@ -73,6 +73,17 @@ const MARK_STYLE = {
 function DiffLine({ sign, text, other }: { sign: string; text: string; other: string }) {
   const { head, changed, tail } = splitDiff(text, other);
 
+  // Whitespace is collapsed for display, so a repair that only moved layout can
+  // leave the two sides identical as rendered. Two matching lines and a marker
+  // pointing at nothing reads as a bug; the summary already carries the fact.
+  if (text === other) {
+    return (
+      <div className="muted" style={{ fontSize: 11, lineHeight: 1.55 }}>
+        (layout only — nothing visible to show)
+      </div>
+    );
+  }
+
   return (
     <div
       className="mono"
@@ -86,7 +97,16 @@ function DiffLine({ sign, text, other }: { sign: string; text: string; other: st
     >
       <span style={{ opacity: 0.6 }}>{sign} </span>
       {head}
-      {changed ? <span style={MARK_STYLE}>{changed}</span> : null}
+      {changed ? (
+        <span style={MARK_STYLE}>
+          {/* A highlighted space looks like nothing at all, and a great many
+              repairs are exactly that, so whitespace-only changes are drawn. */}
+          {/\S/.test(changed) ? changed : changed.replace(/ /g, "·").replace(/\n/g, "⏎")}
+        </span>
+      ) : (
+        /* Nothing on this side: mark where the text was removed from. */
+        <span style={{ ...MARK_STYLE, padding: "0 4px" }} />
+      )}
       {tail}
     </div>
   );
