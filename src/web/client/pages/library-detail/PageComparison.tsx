@@ -46,6 +46,10 @@ const BLOCK_STYLE = {
   maxHeight: 260,
   overflow: "auto",
   whiteSpace: "pre-wrap" as const,
+  // Documentation is full of long bare URLs, which carry no whitespace to wrap
+  // at: pre-wrap alone leaves them running off the edge behind a horizontal
+  // scrollbar, so both panes have to be scrolled sideways to be read.
+  overflowWrap: "anywhere" as const,
   margin: 0,
   padding: "8px 10px",
   border: "1px solid var(--border)",

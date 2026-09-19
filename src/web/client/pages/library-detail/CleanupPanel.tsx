@@ -102,14 +102,20 @@ export function CleanupPanel({ library, version }: CleanupPanelProps) {
           <div className="set-grid tight">
             <div className="k">
               <b>Pages repaired</b>
-              <span>Cleaned fully or in part</span>
+              <span>
+                Cleaned fully or in part. Refused means a check rejected the answer and
+                your original text was kept
+              </span>
             </div>
             <div className="v">
               <Pill variant={repaired > 0 ? "ok" : "idle"}>
                 {repaired} / {data.totalPages}
               </Pill>
               {data.partial > 0 ? <Chip>{data.partial} partial</Chip> : null}
-              {data.failed > 0 ? <Chip>{data.failed} failed</Chip> : null}
+              {/* Stored as "failed", shown as "refused": nothing broke on these
+                  pages. A validation check rejected the model's answer and the
+                  original text was kept, which "failed" reads as damage. */}
+              {data.failed > 0 ? <Chip>{data.failed} refused</Chip> : null}
             </div>
 
             <div className="k">
