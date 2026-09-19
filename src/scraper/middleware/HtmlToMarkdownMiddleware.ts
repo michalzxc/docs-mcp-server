@@ -35,6 +35,24 @@ export class HtmlToMarkdownMiddleware implements ContentProcessorMiddleware {
 
     this.turndownService.use(gfm);
 
+    // Turndown escapes markdown punctuation in text, so an identifier written
+    // source_pod is stored as source\_pod for every page this scrapes. An
+    // underscore inside a word cannot open emphasis in CommonMark, so that
+    // backslash changes nothing about rendering and only makes the text harder
+    // to read, to search and to quote. The same narrowing is applied in the
+    // chunk splitter; this is the other converter, and the one that writes the
+    // markdown we keep as the original.
+    //
+    // Escapes that begin a line are left alone: there they are load-bearing,
+    // since without them `* not a bullet` is re-parsed as a list. Installed
+    // after `use(gfm)` so the plugin cannot replace it.
+    const service = this.turndownService as unknown as {
+      escape: (text: string) => string;
+    };
+    const escapeMarkdown = service.escape.bind(this.turndownService);
+    service.escape = (text: string): string =>
+      escapeMarkdown(text).replace(/(?<=[A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, "_");
+
     this.addCustomRules();
   }
 

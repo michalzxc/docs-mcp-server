@@ -63,6 +63,45 @@ describe("HtmlToMarkdownMiddleware", () => {
     // No close needed
   });
 
+  it("should not escape an underscore inside a word", async () => {
+    // Turndown escapes markdown punctuation in text, so identifiers were stored
+    // as source\_pod for every scraped page. An underscore inside a word cannot
+    // open emphasis in CommonMark, so the backslash changed nothing about
+    // rendering and only made the text harder to read, search and quote.
+    const middleware = new HtmlToMarkdownMiddleware();
+    const html = `
+      <html><body>
+        <p>Labels: source_pod and PULUMI_STACK are read first.</p>
+      </body></html>`;
+    const context = createMockContext(html);
+    const next = vi.fn().mockResolvedValue(undefined);
+
+    await middleware.process(context, next);
+
+    expect(context.content).toContain("source_pod");
+    expect(context.content).toContain("PULUMI_STACK");
+    expect(context.content).not.toContain("\\_");
+    expect(context.errors).toHaveLength(0);
+  });
+
+  it("should still escape a character that would start a list", async () => {
+    // The counterpart: this escape is load-bearing, and dropping it wholesale
+    // would turn literal text into markdown structure. Narrowing the rule to
+    // intra-word underscores is what keeps both true.
+    const middleware = new HtmlToMarkdownMiddleware();
+    const html = `
+      <html><body>
+        <p>* not a bullet</p>
+      </body></html>`;
+    const context = createMockContext(html);
+    const next = vi.fn().mockResolvedValue(undefined);
+
+    await middleware.process(context, next);
+
+    expect(context.content).toContain("\\*");
+    expect(context.errors).toHaveLength(0);
+  });
+
   it("should apply custom code block rule", async () => {
     const middleware = new HtmlToMarkdownMiddleware();
     const html = `
