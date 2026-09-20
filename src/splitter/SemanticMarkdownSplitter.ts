@@ -7,6 +7,7 @@ import TurndownService from "turndown";
 import { unified } from "unified";
 import { createJSDOM } from "../utils/dom";
 import { logger } from "../utils/logger";
+import { unescapeInert } from "../utils/markdownEscapes";
 import { fullTrim } from "../utils/string";
 import { ContentSplitterError, MinimumChunkSizeError } from "./errors";
 import { CodeContentSplitter } from "./splitters/CodeContentSplitter";
@@ -70,8 +71,7 @@ export class SemanticMarkdownSplitter implements DocumentSplitter {
       escape: (text: string) => string;
     };
     const escapeMarkdown = service.escape.bind(this.turndownService);
-    service.escape = (text: string): string =>
-      escapeMarkdown(text).replace(/(?<=[A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, "_");
+    service.escape = (text: string): string => unescapeInert(escapeMarkdown(text));
 
     // Add table rule to preserve markdown table format
     this.turndownService.addRule("table", {

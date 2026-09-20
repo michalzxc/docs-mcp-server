@@ -4,6 +4,7 @@ import type * as cheerio from "cheerio";
 import type { Element } from "domhandler";
 import TurndownService from "turndown";
 import { logger } from "../../utils/logger";
+import { unescapeInert } from "../../utils/markdownEscapes";
 import { fullTrim } from "../../utils/string";
 import type { ContentProcessorMiddleware, MiddlewareContext } from "./types";
 
@@ -50,8 +51,7 @@ export class HtmlToMarkdownMiddleware implements ContentProcessorMiddleware {
       escape: (text: string) => string;
     };
     const escapeMarkdown = service.escape.bind(this.turndownService);
-    service.escape = (text: string): string =>
-      escapeMarkdown(text).replace(/(?<=[A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, "_");
+    service.escape = (text: string): string => unescapeInert(escapeMarkdown(text));
 
     this.addCustomRules();
   }
