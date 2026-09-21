@@ -28,11 +28,14 @@
 const INTRA_WORD = /(?<=[A-Za-z0-9])\\([_*-])(?=[A-Za-z0-9])/g;
 
 /**
- * A double dash is never a list marker: a marker is one dash and a space.
- * Covers `--flag`, and by extension the long-option style used throughout CLI
- * documentation.
+ * A dash only opens a list when a space follows it, so any other dash is inert.
+ *
+ * This started as a double-dash rule, which handled `--namespace` and missed
+ * `sed \-e` on the very next page: a single dash and a letter is just as much
+ * a flag, and just as incapable of starting a list. Matching "not followed by
+ * a space" covers both and stays narrow, because `- item` is untouched.
  */
-const DOUBLE_DASH = /\\-(?=-)/g;
+const INERT_DASH = /\\-(?=\S)/g;
 
 /**
  * Strips escapes that cannot affect rendering, leaving every load-bearing one.
@@ -40,5 +43,5 @@ const DOUBLE_DASH = /\\-(?=-)/g;
  * @returns The same Markdown with inert escapes removed.
  */
 export function unescapeInert(text: string): string {
-  return text.replace(INTRA_WORD, "$1").replace(DOUBLE_DASH, "-");
+  return text.replace(INTRA_WORD, "$1").replace(INERT_DASH, "-");
 }

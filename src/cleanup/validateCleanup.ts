@@ -66,6 +66,44 @@ function codeVolume(blocks: string[]): number {
   return blocks.reduce((total, block) => total + block.replace(/\s+/g, "").length, 0);
 }
 
+/**
+ * Below this, a fenced block is too short to be worth tracing to the original:
+ * a one-word block like `nginx` occurs in the prose anyway, so requiring a
+ * match would reject pages without evidence of a real edit.
+ */
+const MIN_TRACEABLE_CODE_CHARS = 20;
+
+/**
+ * Gates a whole page once its slices are reassembled.
+ *
+ * The per-slice gates cannot see a fenced block that a slice boundary cut in
+ * half. Each half reaches the model as prose, and prose is guarded only by
+ * length drift, so a two-character edit inside a command passes: this is how
+ * `sed -e 's/^kube_owner:.*$/...'` became `sed -e 's/^kube_owner:._$/...'` in a
+ * live index while every slice validated cleanly. Reassembly is the first point
+ * where the block is whole again and can be compared as a block.
+ *
+ * The test is provenance, not equality: every fenced block in the result must
+ * appear verbatim somewhere in the original, ignoring whitespace. That allows
+ * the reflow cleanup is for — re-indenting, merging, moving a block — and
+ * refuses any block whose content the model invented or altered.
+ *
+ * @param original The page's Markdown before cleanup.
+ * @param cleaned The reassembled Markdown the slices produced.
+ * @returns ok, or the first block that cannot be traced to the original.
+ */
+export function validatePage(original: string, cleaned: string): ValidationResult {
+  const haystack = flatten(original);
+  for (const block of fencedCode(cleaned)) {
+    const needle = flatten(block);
+    if (needle.length < MIN_TRACEABLE_CODE_CHARS) continue;
+    if (!haystack.includes(needle)) {
+      return { ok: false, reason: `code altered: ${needle.slice(0, 60)}` };
+    }
+  }
+  return { ok: true };
+}
+
 function sameMultiset(a: string[], b: string[]): boolean {
   const x = [...a].sort();
   const y = [...b].sort();

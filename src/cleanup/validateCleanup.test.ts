@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateCleanup } from "./validateCleanup";
+import { validateCleanup, validatePage } from "./validateCleanup";
 
 const options = { maxLengthDrift: 0.35 };
 
@@ -135,5 +135,57 @@ describe("validateCleanup", () => {
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toBe("link targets altered");
+  });
+});
+
+describe("validatePage", () => {
+  it("catches the corruption every slice gate accepted", () => {
+    // The defect that motivated this gate. A slice boundary fell inside the
+    // fence, so each half reached the model as prose; `.*$` came back as `._$`
+    // and the ±35% drift gate had nothing to say about two characters. Checked
+    // against the whole page, the block no longer traces to the original.
+    const original =
+      "Rewrite the owner:\n\n```bash\nsed -e 's/^kube_owner:.*$/kube_owner: root/' values.yaml\n```\n";
+    const cleaned =
+      "Rewrite the owner:\n\n```bash\nsed -e 's/^kube_owner:._$/kube_owner: root/' values.yaml\n```\n";
+
+    const result = validatePage(original, cleaned);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/^code altered: sed -e/);
+  });
+
+  it("accepts a page whose code is only re-indented or moved", () => {
+    // Reflow is what the pass is for, so provenance is the test, not equality.
+    const original =
+      "Intro\n\n```yaml\n  apiVersion: v1\n  kind: Pod\n  metadata:\n    name: web\n```\n";
+    const cleaned =
+      "# Intro\n\n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n  name: web\n```\n";
+
+    expect(validatePage(original, cleaned)).toEqual({ ok: true });
+  });
+
+  it("accepts re-fencing code the scrape left outside a block", () => {
+    // The block is new, its content is not: it was sitting in the original as
+    // prose, which is exactly the repair the prompt asks for.
+    const original = 'import pulumi\nvpc = Vpc("vpc", cidr_block="10.0.0.0/16")\n';
+    const cleaned =
+      '```python\nimport pulumi\nvpc = Vpc("vpc", cidr_block="10.0.0.0/16")\n```\n';
+
+    expect(validatePage(original, cleaned)).toEqual({ ok: true });
+  });
+
+  it("ignores a block too short to trace", () => {
+    // `nginx` would match somewhere in almost any page; demanding a match for
+    // blocks this small would reject pages without evidence of an edit.
+    expect(
+      validatePage("Use the image.\n", "Use the image:\n\n```\nnginx\n```\n"),
+    ).toEqual({ ok: true });
+  });
+
+  it("accepts an unchanged page", () => {
+    const page = "Run:\n\n```bash\nkubectl get pods -n kube-system --watch\n```\n";
+
+    expect(validatePage(page, page)).toEqual({ ok: true });
   });
 });

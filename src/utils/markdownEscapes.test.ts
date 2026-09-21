@@ -10,12 +10,23 @@ describe("unescapeInert", () => {
     );
   });
 
-  it("removes an escape from a command-line flag", () => {
+  it("removes an escape from a long command-line flag", () => {
     // A cleanup pass produced 266 of these on one library: `\--namespace ...`.
-    // A list marker is a single dash and a space, so a double dash is inert.
     expect(unescapeInert("\\--namespace kube-system")).toBe("--namespace kube-system");
     expect(unescapeInert("\\--set kubeProxyReplacement=true")).toBe(
       "--set kubeProxyReplacement=true",
+    );
+  });
+
+  it("removes an escape from a short command-line flag", () => {
+    // What the first, double-dash-only version of this rule missed: `sed \-e`
+    // is a flag too, and a single dash followed by a letter cannot open a list
+    // any more than a double dash can.
+    expect(unescapeInert("sed \\-e 's/^kube_owner:.*$/root/'")).toBe(
+      "sed -e 's/^kube_owner:.*$/root/'",
+    );
+    expect(unescapeInert("kubectl get pods \\-n kube-system")).toBe(
+      "kubectl get pods -n kube-system",
     );
   });
 

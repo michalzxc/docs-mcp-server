@@ -12,7 +12,7 @@ import { logger } from "../utils/logger";
 import { isDirty } from "./isDirty";
 import { cleanupFingerprint, DEFAULT_CLEANUP_SYSTEM_PROMPT } from "./prompt";
 import { sliceMarkdown } from "./sliceMarkdown";
-import { validateCleanup } from "./validateCleanup";
+import { validateCleanup, validatePage } from "./validateCleanup";
 
 /**
  * The slice of the store the cleanup pass needs.
@@ -461,6 +461,23 @@ export class CleanupService {
     }
 
     const cleanedMarkdown = repairedSlices.join("");
+
+    // Slices are validated in isolation, so a fenced block cut by a slice
+    // boundary is judged as prose at both ends — and prose is guarded only by
+    // length drift, which a two-character edit inside a command passes. The
+    // reassembled page is the first place the block is whole again, so it is
+    // checked here as well. A page that fails is rewritten from its own
+    // original, which both discards this run's damage and repairs a page an
+    // earlier run corrupted.
+    const pageCheck = validatePage(source, cleanedMarkdown);
+    if (!pageCheck.ok) {
+      logger.warn(`⚠️  Cleanup rejected for ${page.url}: ${pageCheck.reason}`);
+      const restored = await this.splitter.splitText(source, "text/markdown");
+      await this.store.replacePageChunks(page.id, restored, page.title ?? "", page.url);
+      await this.store.markPageCleanup(page.id, PageCleanupStatus.FAILED, fingerprint);
+      return this.result(page, PageCleanupStatus.FAILED, slices.length, 0, slices.length);
+    }
+
     const chunks = await this.splitter.splitText(cleanedMarkdown, "text/markdown");
     await this.store.replacePageChunks(page.id, chunks, page.title ?? "", page.url);
 
