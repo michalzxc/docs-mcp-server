@@ -210,6 +210,29 @@ describe("validatePage", () => {
     expect(result.ok === false && result.reason).toMatch(/^code altered:/);
   });
 
+  it("rejects a page that welds a heading onto a closing fence", () => {
+    // What reassembly produced on 142 pages: the answers were joined with no
+    // separator, so a slice ending at a closing fence collected the next
+    // slice's heading. The fence never closes and the rest of the page is
+    // served as code.
+    const original = "```sh\nkubeadm join\n```\n\n### Options\n\nSee the table.\n";
+    const cleaned = "```sh\nkubeadm join\n```### Options\n\nSee the table.\n";
+
+    const result = validatePage(original, cleaned);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/^fence glued to a heading:/);
+  });
+
+  it("tolerates a page whose original already welded one", () => {
+    // The rule compares counts, so a defect that arrived with the scrape is
+    // not blamed on the repair. No stored original actually has one, but the
+    // gate must not start failing if one ever does.
+    const page = "```sh\nkubeadm join\n```### Options\n";
+
+    expect(validatePage(page, page)).toEqual({ ok: true });
+  });
+
   it("accepts an unchanged page", () => {
     const page = "Run:\n\n```bash\nkubectl get pods -n kube-system --watch\n```\n";
 

@@ -63,6 +63,11 @@ function flatten(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** Fence markers with a heading welded onto the same line. */
+function gluedFences(text: string): number {
+  return (text.match(/`{3,}#/g) ?? []).length;
+}
+
 /** Characters of actual code, ignoring layout. */
 function codeVolume(blocks: string[]): number {
   return blocks.reduce((total, block) => total + block.replace(/\s+/g, "").length, 0);
@@ -95,6 +100,17 @@ const MIN_TRACEABLE_CODE_CHARS = 20;
  * @returns ok, or the first block that cannot be traced to the original.
  */
 export function validatePage(original: string, cleaned: string): ValidationResult {
+  // A fence marker with a heading welded to it never closes, so everything
+  // after it is served as code. Reassembly caused this by joining trimmed
+  // answers with no separator, and the provenance check below only caught it
+  // by accident, when the runaway block happened to stop tracing. Comparing
+  // the counts catches it directly and cannot fire on an honest page: across
+  // 3,298 stored originals, not one contained the sequence.
+  if (gluedFences(cleaned) > gluedFences(original)) {
+    const line = /[^\n]*`{3,}#[^\n]*/.exec(cleaned)?.[0] ?? "";
+    return { ok: false, reason: `fence glued to a heading: ${line.slice(0, 60)}` };
+  }
+
   const haystack = flatten(original);
   for (const block of fencedCode(cleaned)) {
     const needle = flatten(block);
