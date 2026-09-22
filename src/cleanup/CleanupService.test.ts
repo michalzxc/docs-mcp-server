@@ -312,6 +312,37 @@ describe("CleanupService.cleanVersion", () => {
     expect(summary.pagesFailed).toBe(0);
   });
 
+  it("marks pages with the same fingerprint a forced run selects by", async () => {
+    // These drifted apart: the query asked for pages lacking `<fp>-forced`
+    // while the page was marked `<fp>`, so no page ever left the result set.
+    const store = makeStore(makePage());
+    const service = new CleanupService(store, makeConfig(), makeModel(CLEAN));
+
+    await service.cleanVersion(7, { force: true });
+
+    const selectBy = (store.getPagesNeedingCleanup as ReturnType<typeof vi.fn>).mock
+      .calls[0][1];
+    const markWith = (store.markPageCleanup as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    expect(selectBy).toMatch(/-forced$/);
+    expect(markWith).toBe(selectBy);
+  });
+
+  it("stops instead of looping when a full batch comes back unchanged", async () => {
+    // The backstop for the same class of bug. A full batch (PAGE_BATCH rows)
+    // of already-processed pages means the query cannot see the mark, and the
+    // short-batch check never fires; a forced run spun for four hours on this.
+    const pages = Array.from({ length: 50 }, (_, i) => makePage({ id: i + 1 }));
+    const store = makeStore(pages[0]);
+    (store.getPagesNeedingCleanup as ReturnType<typeof vi.fn>).mockResolvedValue(pages);
+    (store.countPagesNeedingCleanup as ReturnType<typeof vi.fn>).mockResolvedValue(50);
+    const service = new CleanupService(store, makeConfig(), makeModel(CLEAN));
+
+    const summary = await service.cleanVersion(7);
+
+    expect(summary.pagesConsidered).toBe(50);
+    expect(store.getPagesNeedingCleanup).toHaveBeenCalledTimes(2);
+  });
+
   it("stops when cancelled", async () => {
     const page = makePage();
     const store = makeStore(page);

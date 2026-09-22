@@ -17,6 +17,10 @@ interface FenceRegion {
   startOffset: number;
   /** End offset (exclusive) of the line after the matching closer, or text.length if unclosed. */
   endOffset: number;
+  /** Start offset of the first content line, i.e. just after the opener line. */
+  contentStartOffset: number;
+  /** End offset (exclusive) of the content, i.e. the start of the closer line. */
+  contentEndOffset: number;
 }
 
 interface LineInfo {
@@ -88,6 +92,8 @@ function findFenceRegions(text: string): FenceRegion[] {
     const delimiter = opener[1][0]; // '`' or '~'
     const count = opener[1].length;
     const startOffset = lines[i].offset;
+    const contentStartOffset =
+      lines[i].offset + lines[i].content.length + lines[i].newlineLength;
 
     let closerLineIndex = -1;
     for (let j = i + 1; j < lines.length; j++) {
@@ -98,14 +104,24 @@ function findFenceRegions(text: string): FenceRegion[] {
     }
 
     if (closerLineIndex === -1) {
-      regions.push({ startOffset, endOffset: text.length });
+      regions.push({
+        startOffset,
+        endOffset: text.length,
+        contentStartOffset,
+        contentEndOffset: text.length,
+      });
       break;
     }
 
     const closerLine = lines[closerLineIndex];
     const endOffset =
       closerLine.offset + closerLine.content.length + closerLine.newlineLength;
-    regions.push({ startOffset, endOffset });
+    regions.push({
+      startOffset,
+      endOffset,
+      contentStartOffset,
+      contentEndOffset: closerLine.offset,
+    });
     i = closerLineIndex + 1;
   }
 
@@ -138,6 +154,43 @@ export function nextSafeOffset(text: string, candidateOffset: number): number {
     }
   }
   return candidateOffset;
+}
+
+/**
+ * The body of every fenced block, opener and closer lines excluded.
+ *
+ * Pairing fences with a regular expression looks equivalent and is not: it
+ * ignores the delimiter character and its length, so a page that documents
+ * Markdown — a style guide showing a ``` example inside a ```` block — throws
+ * the pairing out of phase and every "block" after it is really prose. A
+ * validator built on that rejects honest repairs to the prose it mistakes for
+ * code, which is exactly what happened on the authentik style guide.
+ *
+ * @param text Markdown to scan.
+ * @returns Each block's content, in document order.
+ */
+export function fencedBlocks(text: string): string[] {
+  return findFenceRegions(text).map((region) =>
+    text.slice(region.contentStartOffset, region.contentEndOffset),
+  );
+}
+
+/**
+ * The text with every fenced block removed, for rules that apply only to prose.
+ * @param text Markdown to scan.
+ * @returns The same text with fenced regions cut out.
+ */
+export function withoutFences(text: string): string {
+  const regions = findFenceRegions(text);
+  if (regions.length === 0) return text;
+
+  let out = "";
+  let cursor = 0;
+  for (const region of regions) {
+    out += text.slice(cursor, region.startOffset);
+    cursor = region.endOffset;
+  }
+  return out + text.slice(cursor);
 }
 
 /**

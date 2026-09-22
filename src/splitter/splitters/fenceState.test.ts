@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { hasOpenFenceAtEnd, isOpenAt, nextSafeOffset } from "./fenceState";
+import {
+  fencedBlocks,
+  hasOpenFenceAtEnd,
+  isOpenAt,
+  nextSafeOffset,
+  withoutFences,
+} from "./fenceState";
 
 const fence = (lang: string, body: string) => `\`\`\`${lang}\n${body}\n\`\`\``;
 
@@ -96,6 +102,54 @@ describe("fenceState", () => {
       const text = "intro\n```ts\nstill open";
       const candidate = text.indexOf("```") + 4;
       expect(nextSafeOffset(text, candidate)).toBe(text.length);
+    });
+  });
+
+  describe("fencedBlocks", () => {
+    it("returns the body without the opener and closer lines", () => {
+      expect(fencedBlocks("intro\n```ts\nconst x = 1;\n```\nafter")).toEqual([
+        "const x = 1;\n",
+      ]);
+    });
+
+    it("returns each block of a multi-fence document in order", () => {
+      expect(fencedBlocks("a\n```\nA\n```\nb\n```\nB\n```\nc")).toEqual(["A\n", "B\n"]);
+    });
+
+    it("does not close a 4-backtick fence on an inner 3-backtick line", () => {
+      // What a regular expression gets wrong. A page documenting Markdown puts
+      // a fence inside a fence; pairing by pattern ends the outer block at the
+      // inner line and reads the prose that follows as code.
+      const text = "````md\n```sh\nboom\n```\n````\nafter\n";
+
+      expect(fencedBlocks(text)).toEqual(["```sh\nboom\n```\n"]);
+    });
+
+    it("treats an unclosed opener as running to the end", () => {
+      expect(fencedBlocks("intro\n```ts\nno closer")).toEqual(["no closer"]);
+    });
+
+    it("recognises tilde fences and does not pair them with backticks", () => {
+      expect(fencedBlocks("~~~\ncode\n~~~\n")).toEqual(["code\n"]);
+    });
+
+    it("returns nothing for prose", () => {
+      expect(fencedBlocks("just words, and an `inline span`")).toEqual([]);
+    });
+  });
+
+  describe("withoutFences", () => {
+    it("removes fenced blocks and keeps the prose around them", () => {
+      expect(withoutFences("before\n```ts\ncode\n```\nafter\n")).toBe("before\nafter\n");
+    });
+
+    it("removes the whole of a fence that contains another fence", () => {
+      expect(withoutFences("````md\n```sh\nboom\n```\n````\nafter\n")).toBe("after\n");
+    });
+
+    it("returns text with no fences unchanged", () => {
+      const text = "plain prose with an `inline span`\n";
+      expect(withoutFences(text)).toBe(text);
     });
   });
 

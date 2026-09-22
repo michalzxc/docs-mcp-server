@@ -1,4 +1,8 @@
-import { hasOpenFenceAtEnd } from "../splitter/splitters/fenceState";
+import {
+  fencedBlocks,
+  hasOpenFenceAtEnd,
+  withoutFences,
+} from "../splitter/splitters/fenceState";
 
 /**
  * Gates a model's output before it is allowed to replace indexed content.
@@ -17,22 +21,20 @@ export interface ValidationOptions {
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
 
-/** Fenced blocks, normalised so trailing whitespace differences don't count. */
+/**
+ * Fenced blocks, normalised so trailing whitespace differences don't count.
+ *
+ * Uses the splitter's fence scanner rather than a regular expression of its
+ * own: see fencedBlocks for why pairing fences by pattern silently misreads
+ * pages that document Markdown.
+ */
 function fencedCode(markdown: string): string[] {
-  const blocks: string[] = [];
-  const pattern = /(?:```|~~~)[^\n]*\n([\s\S]*?)(?:```|~~~)/g;
-  let match = pattern.exec(markdown);
-  while (match !== null) {
-    blocks.push(normaliseCode(match[1] ?? ""));
-    match = pattern.exec(markdown);
-  }
-  return blocks;
+  return fencedBlocks(markdown).map(normaliseCode);
 }
 
 /** Inline spans, which carry flags, paths and identifiers worth protecting. */
 function inlineCode(markdown: string): string[] {
-  const withoutFences = markdown.replace(/(?:```|~~~)[\s\S]*?(?:```|~~~)/g, "");
-  const spans = withoutFences.match(/`[^`\n]+`/g) ?? [];
+  const spans = withoutFences(markdown).match(/`[^`\n]+`/g) ?? [];
   return spans.map((span) => span.slice(1, -1).trim()).sort();
 }
 

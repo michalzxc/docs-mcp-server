@@ -338,6 +338,7 @@ export class CleanupService {
 
     const pagesTotal = await this.store.countPagesNeedingCleanup(versionId, fingerprint);
     let pagesDone = 0;
+    const processed = new Set<number>();
 
     // Paged rather than loaded at once: a library can hold thousands of pages,
     // and each iteration re-queries so pages cleaned by this run drop out.
@@ -351,6 +352,18 @@ export class CleanupService {
       );
       if (pages.length === 0) break;
 
+      // A batch of pages this run already handled means the query cannot see
+      // the mark it writes, and re-querying will return them forever. The
+      // length check below misses it whenever the library has more pages than
+      // one batch: a forced run spun on the same 50 pages for four hours
+      // before it was killed, paying the model for every lap.
+      if (pages.every((page) => processed.has(page.id))) {
+        logger.warn(
+          `⚠️  Cleanup stopped: ${pages.length} pages came back unchanged after processing.`,
+        );
+        break;
+      }
+
       for (const page of pages) {
         if (options.signal?.aborted) break;
 
@@ -359,9 +372,11 @@ export class CleanupService {
           {
             full: options.full ?? this.config.cleanup.filter === "all",
             signal: options.signal,
+            fingerprint,
           },
           onSlice,
         );
+        processed.add(page.id);
 
         summary.pagesConsidered++;
         pagesDone++;
@@ -390,10 +405,14 @@ export class CleanupService {
    */
   async cleanPage(
     page: CleanupPage,
-    options: { full?: boolean; signal?: AbortSignal } = {},
+    options: { full?: boolean; signal?: AbortSignal; fingerprint?: string } = {},
     onSlice?: (event: CleanupSliceEvent) => void,
   ): Promise<PageCleanupResult> {
-    const fingerprint = this.fingerprint;
+    // A run must mark pages with the same fingerprint it selects them by.
+    // cleanVersion asks a forced run for pages lacking `<fp>-forced` while this
+    // marked them `<fp>`, so no page ever dropped out of the query. Callers
+    // cleaning a single page still get the unforced default.
+    const fingerprint = options.fingerprint ?? this.fingerprint;
     const source = await this.resolveSource(page);
 
     if (!source) {

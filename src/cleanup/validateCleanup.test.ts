@@ -183,6 +183,33 @@ describe("validatePage", () => {
     ).toEqual({ ok: true });
   });
 
+  it("does not mistake prose for code on a page that documents Markdown", () => {
+    // The authentik style guide, which shows a fence inside a fence. Pairing
+    // fences by regular expression went out of phase there and offered the
+    // following prose as a code block; the model had legitimately removed an
+    // escape from it, so the page was refused and retried on every lap.
+    const original =
+      "# Style guide\n\nShow an error like this:\n\n````md\n```sh\nError: boom\n```\n````\n\n" +
+      "- **Possible causes**:\n    - Incorrect \\-username or password.\n";
+    const cleaned =
+      "# Style guide\n\nShow an error like this:\n\n````md\n```sh\nError: boom\n```\n````\n\n" +
+      "- **Possible causes**:\n    - Incorrect -username or password.\n";
+
+    expect(validatePage(original, cleaned)).toEqual({ ok: true });
+  });
+
+  it("still catches altered code on a page that documents Markdown", () => {
+    // The same shape, but this time the code itself changed: phase-correct
+    // parsing must not buy safety by giving up on the real check.
+    const original = "````md\n```sh\nkubectl get pods -n prod\n```\n````\n";
+    const cleaned = "````md\n```sh\nkubectl get pods -n dev\n```\n````\n";
+
+    const result = validatePage(original, cleaned);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/^code altered:/);
+  });
+
   it("accepts an unchanged page", () => {
     const page = "Run:\n\n```bash\nkubectl get pods -n kube-system --watch\n```\n";
 
