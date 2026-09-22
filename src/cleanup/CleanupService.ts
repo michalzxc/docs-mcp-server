@@ -229,6 +229,34 @@ export interface CleanupSummary {
 const PAGE_BATCH = 50;
 
 /**
+ * Rejoins repaired slices, restoring the line breaks each boundary carried.
+ *
+ * A model answer comes back trimmed — stripFenceWrapper trims it, and the
+ * model rarely returns trailing blank lines anyway. Measured on two real
+ * pages, 8 of 8 and 2 of 3 slices lost the newlines their input ended with.
+ * Joined with nothing in between, a slice ending in a closing fence lands on
+ * the next slice's heading: ```## Add the mocks. That fence never closes, so
+ * the remainder of the page is served as code, and it is why pages showed a
+ * ```### sequence their stored original did not contain.
+ *
+ * Only ever adds back what the boundary had; a repair that deliberately added
+ * blank lines keeps them.
+ *
+ * @param originals The slices as they were sent.
+ * @param repaired The answer for each, positionally.
+ * @returns The reassembled page.
+ */
+export function reassembleSlices(originals: string[], repaired: string[]): string {
+  return repaired
+    .map((text, index) => {
+      const want = /\n*$/.exec(originals[index] ?? "")?.[0] ?? "";
+      const have = /\n*$/.exec(text)?.[0] ?? "";
+      return have.length >= want.length ? text : text + want.slice(have.length);
+    })
+    .join("");
+}
+
+/**
  * One limiter per process, not one per job.
  *
  * Cleanup jobs run under the pipeline's own concurrency, so a limiter owned by
@@ -479,7 +507,7 @@ export class CleanupService {
       return this.result(page, status, slices.length, repaired, kept);
     }
 
-    const cleanedMarkdown = repairedSlices.join("");
+    const cleanedMarkdown = reassembleSlices(slices, repairedSlices);
 
     // Slices are validated in isolation, so a fenced block cut by a slice
     // boundary is judged as prose at both ends — and prose is guarded only by

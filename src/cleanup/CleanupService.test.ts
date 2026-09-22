@@ -7,6 +7,7 @@ import {
   CleanupService,
   type CleanupStore,
   changedRegion,
+  reassembleSlices,
   stripFenceWrapper,
   summarise,
 } from "./CleanupService";
@@ -291,6 +292,41 @@ describe("CleanupService.cleanPage", () => {
 
     expect(model.invoke).not.toHaveBeenCalled();
     expect(result.kept).toBeGreaterThan(0);
+  });
+});
+
+describe("reassembleSlices", () => {
+  it("restores the line breaks the answer was trimmed of", () => {
+    // The defect this exists for. Joining the trimmed answers with nothing in
+    // between put a heading on a closing fence line, the fence never closed,
+    // and the rest of the page was served as code.
+    const originals = ["Intro\n\n```go\ncode\n```\n\n", "## Add the mocks\n"];
+    const repaired = ["Intro\n\n```go\ncode\n```", "## Add the mocks"];
+
+    expect(reassembleSlices(originals, repaired)).toBe(
+      "Intro\n\n```go\ncode\n```\n\n## Add the mocks\n",
+    );
+  });
+
+  it("produces no fence glued to a heading", () => {
+    const joined = reassembleSlices(
+      ["```sh\nkubeadm join\n```\n", "### Options\n"],
+      ["```sh\nkubeadm join\n```", "### Options"],
+    );
+
+    expect(joined).not.toMatch(/`{3,}#/);
+  });
+
+  it("leaves an answer that kept its own line breaks alone", () => {
+    expect(reassembleSlices(["a\n\n", "b"], ["a\n\n", "b"])).toBe("a\n\nb");
+  });
+
+  it("keeps line breaks the repair added rather than trimming back", () => {
+    expect(reassembleSlices(["a\n"], ["a\n\n\n"])).toBe("a\n\n\n");
+  });
+
+  it("handles slices that never ended in a line break", () => {
+    expect(reassembleSlices(["a", "b"], ["a", "b"])).toBe("ab");
   });
 });
 
