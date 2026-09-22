@@ -29,6 +29,9 @@ vi.mock("@trpc/client", () => {
   } as any;
 });
 
+const job = (id: string, status: string, extra: Record<string, unknown> = {}) =>
+  ({ id, status, library: "test", version: null, error: null, ...extra }) as any;
+
 describe("PipelineClient", () => {
   let client: PipelineClient;
   let eventBus: EventBusService;
@@ -40,12 +43,15 @@ describe("PipelineClient", () => {
     mockClient.ping.query.mockResolvedValue({ status: "ok" });
     mockClient.enqueueScrapeJob.mutate.mockResolvedValue({ jobId: "job-123" });
     mockClient.enqueueRefreshJob.mutate.mockResolvedValue({ jobId: "job-456" });
-    mockClient.getJob.query.mockResolvedValue(undefined);
+    // Waiting now polls the worker, so the default has to be a real record of
+    // a job still in flight rather than undefined.
+    mockClient.getJob.query.mockResolvedValue(job("job-123", "running"));
     mockClient.getJobs.query.mockResolvedValue({ jobs: [] });
     mockClient.cancelJob.mutate.mockResolvedValue({ success: true });
     mockClient.clearCompletedJobs.mutate.mockResolvedValue({ count: 5 });
     eventBus = new EventBusService();
-    client = new PipelineClient(serverUrl, eventBus);
+    // Poll fast, so the tests exercise polling without waiting real seconds.
+    client = new PipelineClient(serverUrl, eventBus, 5);
   });
 
   describe("start", () => {
@@ -94,6 +100,59 @@ describe("PipelineClient", () => {
   });
 
   describe("waitForJobCompletion", () => {
+    it("resolves by polling when no status event ever arrives", async () => {
+      // The production defect. RemoteEventProxy is built by AppServer, so a
+      // CLI run against --server-url has nothing publishing job events onto
+      // its bus: a cleanup pass finished all 999 pages server-side and the
+      // caller waited a further 150 minutes on an event that cannot come.
+      const jobId = "job-123";
+      mockClient.getJob.query
+        .mockResolvedValueOnce(job(jobId, "running"))
+        .mockResolvedValueOnce(job(jobId, "running"))
+        .mockResolvedValueOnce(job(jobId, "completed"));
+
+      await expect(client.waitForJobCompletion(jobId)).resolves.toBeUndefined();
+    });
+
+    it("rejects by polling when the job failed", async () => {
+      const jobId = "job-123";
+      mockClient.getJob.query
+        .mockResolvedValueOnce(job(jobId, "running"))
+        .mockResolvedValueOnce(job(jobId, "failed", { error: { message: "boom" } }));
+
+      await expect(client.waitForJobCompletion(jobId)).rejects.toThrow("boom");
+    });
+
+    it("returns at once when the job has already finished", async () => {
+      const jobId = "job-123";
+      mockClient.getJob.query.mockResolvedValueOnce(job(jobId, "completed"));
+
+      await expect(client.waitForJobCompletion(jobId)).resolves.toBeUndefined();
+    });
+
+    it("treats a cancelled job as finished, as the local pipeline does", async () => {
+      const jobId = "job-123";
+      mockClient.getJob.query.mockResolvedValueOnce(job(jobId, "cancelled"));
+
+      await expect(client.waitForJobCompletion(jobId)).resolves.toBeUndefined();
+    });
+
+    it("keeps waiting while the job is only cancelling", async () => {
+      const jobId = "job-123";
+      mockClient.getJob.query
+        .mockResolvedValueOnce(job(jobId, "cancelling"))
+        .mockResolvedValueOnce(job(jobId, "cancelling"))
+        .mockResolvedValueOnce(job(jobId, "cancelled"));
+
+      await expect(client.waitForJobCompletion(jobId)).resolves.toBeUndefined();
+    });
+
+    it("throws when there is no such job", async () => {
+      mockClient.getJob.query.mockResolvedValueOnce(undefined);
+
+      await expect(client.waitForJobCompletion("nope")).rejects.toThrow("Job not found");
+    });
+
     it("should resolve when job completes successfully via event bus", async () => {
       const jobId = "job-123";
 
