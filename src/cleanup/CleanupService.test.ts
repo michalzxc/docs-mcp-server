@@ -295,6 +295,38 @@ describe("CleanupService.cleanPage", () => {
   });
 });
 
+describe("CleanupService reconciliation", () => {
+  // A closing fence with a heading welded to it: the fence never closes, so
+  // everything after it is served as code.
+  const DAMAGED = "```sh\necho hi\n```## Heading\n\nBody.\n";
+
+  it("restores a page it skips when the stored text is damaged", async () => {
+    // How 8 pages survived a full regeneration still broken. They were skipped
+    // or wholly rejected, and both paths marked the fingerprint and returned
+    // without ever looking at what was on disk.
+    const page = makePage({ raw_content: CLEAN });
+    const store = makeStore(page, [DAMAGED]);
+    const service = new CleanupService(store, makeConfig(), makeModel(CLEAN));
+
+    const result = await service.cleanPage(page);
+
+    expect(result.status).toBe(PageCleanupStatus.SKIPPED);
+    expect(store.replacePageChunks).toHaveBeenCalled();
+  });
+
+  it("leaves a page it skips alone when the stored text is sound", async () => {
+    // The other half: a good repair from an earlier run must survive. Only a
+    // page the guard refuses is rewritten.
+    const page = makePage({ raw_content: CLEAN });
+    const store = makeStore(page, [CLEAN]);
+    const service = new CleanupService(store, makeConfig(), makeModel(CLEAN));
+
+    await service.cleanPage(page);
+
+    expect(store.replacePageChunks).not.toHaveBeenCalled();
+  });
+});
+
 describe("reassembleSlices", () => {
   it("restores the line breaks the answer was trimmed of", () => {
     // The defect this exists for. Joining the trimmed answers with nothing in

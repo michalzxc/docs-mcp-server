@@ -450,7 +450,10 @@ export class CleanupService {
 
     if (!options.full && !isDirty(source)) {
       // Nothing a model would fix: record the fingerprint so the sweep stops
-      // reconsidering this page, and spend no tokens on it.
+      // reconsidering this page, and spend no tokens on it. What is already
+      // stored still has to be sound, because skipping is not the same as
+      // being correct.
+      await this.reconcileServedText(page, source);
       await this.store.markPageCleanup(page.id, PageCleanupStatus.SKIPPED, fingerprint);
       return this.result(page, PageCleanupStatus.SKIPPED, 0, 0, 0);
     }
@@ -502,6 +505,10 @@ export class CleanupService {
     }
 
     if (repaired === 0) {
+      // Every slice was refused, so there is no repair to store — but the text
+      // already on disk may be damage from an earlier, unguarded run, and
+      // returning here without looking is what left it there.
+      await this.reconcileServedText(page, source);
       const status = kept > 0 ? PageCleanupStatus.FAILED : PageCleanupStatus.SKIPPED;
       await this.store.markPageCleanup(page.id, status, fingerprint);
       return this.result(page, status, slices.length, repaired, kept);
@@ -531,6 +538,37 @@ export class CleanupService {
     const status = kept > 0 ? PageCleanupStatus.PARTIAL : PageCleanupStatus.CLEAN;
     await this.store.markPageCleanup(page.id, status, fingerprint);
     return this.result(page, status, slices.length, repaired, kept);
+  }
+
+  /**
+   * Restores a page's chunks from its original when what is served is damaged.
+   *
+   * A page the pass does not repair keeps whatever chunks it already had, and
+   * an earlier run that predates the page guard may have left those broken. A
+   * full regeneration still finished with 8 pages serving a fence welded to a
+   * heading, and every one of them was skipped or wholly rejected this time
+   * round, so no code path ever rewrote them: marking a fingerprint is not the
+   * same as checking the text.
+   *
+   * Restores only when the page guard refuses what is stored, so a sound
+   * repair from an earlier run is left exactly as it is.
+   *
+   * @param page The page being considered.
+   * @param source Its pre-cleanup Markdown.
+   * @returns true when the chunks were rewritten.
+   */
+  private async reconcileServedText(page: CleanupPage, source: string): Promise<boolean> {
+    const chunks = await this.store.getChunksByPageId(page.id);
+    if (chunks.length === 0) return false;
+
+    const served = chunks.map((chunk) => chunk.content).join("\n\n");
+    const verdict = validatePage(source, served);
+    if (verdict.ok) return false;
+
+    logger.warn(`⚠️  Restoring ${page.url} from its original: ${verdict.reason}`);
+    const rebuilt = await this.splitter.splitText(source, "text/markdown");
+    await this.store.replacePageChunks(page.id, rebuilt, page.title ?? "", page.url);
+    return true;
   }
 
   /**
