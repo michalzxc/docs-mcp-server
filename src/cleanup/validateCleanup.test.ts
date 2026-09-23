@@ -248,6 +248,17 @@ describe("validatePage", () => {
     expect(result.ok === false && result.reason).toMatch(/^heading welded to text:/);
   });
 
+  it("does not report a lone hash left behind by dropped inline-code markup", () => {
+    // A kubernetes page wrote `( Issuer URL )#` as inline code, and the
+    // splitter's table handling dropped the backticks. The hash is literal on
+    // both sides and never was a heading, but a single-hash rule fired on the
+    // markup loss. Requiring two hashes tells the two apart.
+    const original = "the prefix defaults to `( Issuer URL )#` where it is set.\n";
+    const cleaned = "the prefix defaults to ( Issuer URL )# where it is set.\n";
+
+    expect(validatePage(original, cleaned)).toEqual({ ok: true });
+  });
+
   it("tolerates a welded heading the original already had", () => {
     // Counted, not forbidden: a page may legitimately contain the sequence,
     // and only an increase is the repair's doing.

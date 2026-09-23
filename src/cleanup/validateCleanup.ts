@@ -81,11 +81,20 @@ function gluedFences(text: string): number {
  * sequence; only an increase over the original is the repair's doing.
  */
 function weldedHeadings(text: string): number {
-  // The character before the marker must not itself be a hash, or a perfectly
-  // ordinary heading counts as welded: in "\n## Validate" the first hash is
-  // non-whitespace, so \S matches it and the second satisfies the run. Both
-  // sides of the comparison then tie and the gate passes everything.
-  return (text.match(/[^\s#]#{1,6}[ \t]/g) ?? []).length;
+  // Two constraints, both learned from a wrong version of this line.
+  //
+  // The preceding character must not itself be a hash, or an ordinary heading
+  // counts as welded: in "\n## Validate" the first hash is non-whitespace, so
+  // \S matched it and the second satisfied the run. Both sides of the
+  // comparison then tied and the gate passed everything.
+  //
+  // And the run must be at least two hashes. A lone hash after text is
+  // ordinary — 108 of them sit in the stored originals, in URL fragments and
+  // the like — so anything that disturbs the surrounding markup flips the
+  // count. One page tripped this when the splitter dropped the backticks from
+  // `( Issuer URL )#`, leaving a literal hash that was never a heading. Every
+  // real weld observed took the form "text.## Heading".
+  return (text.match(/[^\s#]#{2,6}[ \t]/g) ?? []).length;
 }
 
 /** Characters of actual code, ignoring layout. */
@@ -135,7 +144,7 @@ export function validatePage(original: string, cleaned: string): ValidationResul
   // longer starts its line is not a heading at all, just literal hashes in the
   // middle of a sentence.
   if (weldedHeadings(cleaned) > weldedHeadings(original)) {
-    const line = /[^\n]*[^\s#]#{1,6}[ \t][^\n]*/.exec(cleaned)?.[0] ?? "";
+    const line = /[^\n]*[^\s#]#{2,6}[ \t][^\n]*/.exec(cleaned)?.[0] ?? "";
     return { ok: false, reason: `heading welded to text: ${line.slice(0, 60)}` };
   }
 
