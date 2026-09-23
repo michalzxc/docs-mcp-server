@@ -233,6 +233,29 @@ describe("validatePage", () => {
     expect(validatePage(page, page)).toEqual({ ok: true });
   });
 
+  it("rejects a page that welds a heading onto the text before it", () => {
+    // Seven pages served this: the blank line between a sentence and the next
+    // heading was dropped, so the heading stopped being a heading and became
+    // literal hashes mid-sentence. The fence rule cannot see it, because
+    // nothing here is a fence.
+    const original =
+      "...provided by Cilium.\n\n## Validate the Installation\n\nTo check:\n";
+    const cleaned = "...provided by Cilium.## Validate the Installation\n\nTo check:\n";
+
+    const result = validatePage(original, cleaned);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/^heading welded to text:/);
+  });
+
+  it("tolerates a welded heading the original already had", () => {
+    // Counted, not forbidden: a page may legitimately contain the sequence,
+    // and only an increase is the repair's doing.
+    const page = "a literal C# and text.## Not a heading\n\nBody.\n";
+
+    expect(validatePage(page, page)).toEqual({ ok: true });
+  });
+
   it("accepts an unchanged page", () => {
     const page = "Run:\n\n```bash\nkubectl get pods -n kube-system --watch\n```\n";
 
